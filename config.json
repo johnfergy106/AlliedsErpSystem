@@ -1,0 +1,12 @@
+{
+  "companyName": "Allied Industrial Supplies, Inc.",
+  "website": "Alliedsupplies.net",
+  "supportEmail": "",
+  "environmentName": "Production",
+  "apiBaseUrl": "",
+  "requireHttps": true,
+  "localPort": 4173,
+  "bindHost": "0.0.0.0",
+  "publicHost": "10.41.25.188",
+  "allowFirewallRule": true
+}
