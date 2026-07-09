@@ -1,0 +1,24 @@
+# Generated packages
+dist/
+outputs/Allied-ERP-Application/
+outputs/*.zip
+*.exe
+*.sed
+
+# Runtime logs
+app-startup-log.txt
+installer-error-log.txt
+*.log
+
+# Local/editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Node/Vite
+node_modules/
+package-lock.json
+
+# Temporary work area
+work/
