@@ -5,7 +5,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const root = path.join(__dirname, "outputs");
+const builtRoot = path.join(__dirname, "dist");
+const sourceRoot = path.join(__dirname, "outputs");
+const root = existsSync(path.join(builtRoot, "index.html")) ? builtRoot : sourceRoot;
 const port = Number(process.env.PORT) || 4173;
 const host = process.env.HOST || "0.0.0.0";
 
