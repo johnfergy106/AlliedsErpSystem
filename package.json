@@ -1,0 +1,14 @@
+{
+  "name": "allied-erp-mvp",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "preview": "vite preview --host 0.0.0.0",
+    "build": "node -e \"console.log('Static MVP build uses files in outputs/')\""
+  },
+  "devDependencies": {
+    "vite": "^5.4.0"
+  }
+}
