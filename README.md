@@ -26,6 +26,20 @@ http://YOUR-SERVER-COMPUTER-IP:4173
 
 Use the network URL shown by the launcher. Other computers must use your computer's IP address, not their own `localhost`.
 
+## Login Access
+
+Employee usernames and passwords are managed inside the ERP by a Super Admin.
+If a hosted browser keeps rejecting a valid login after an update, use **Reset login cache** on the sign-in screen, then try signing in again.
+For Render, set employee passwords as environment variables instead of saving them in GitHub:
+
+```text
+ALLIED_ERP_ADMIN_PASSWORD
+ALLIED_ERP_CREDIT_PASSWORD
+ALLIED_ERP_SHIPPING_PASSWORD
+ALLIED_ERP_JORDAN_PASSWORD
+ALLIED_ERP_AVERY_PASSWORD
+```
+
 ## Build Installer
 
 Create the ZIP installer:

@@ -7,6 +7,7 @@ const additionalHosts = (process.env.__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS || "
   .map((host) => host.trim())
   .filter(Boolean);
 const allowedHosts = [
+  "erp.alliedsupplies.net",
   "alliedserpsystem.onrender.com",
   ".onrender.com",
   "onrender.com",

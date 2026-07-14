@@ -14,8 +14,9 @@ Run as a downloaded local application
 
 Login accounts
 - Ask the Super Admin for employee usernames and passwords.
-- Change any starter passwords before using the app for live company records.
-- Credit Dept. and Shipping users are included, but admin must set their passwords in Users before first login.
+- Use Reset login cache on the sign-in screen if a hosted browser keeps rejecting a valid login after an update.
+- Change any starter or temporary passwords before using the app for live company records.
+- On Render, store hosted passwords in environment variables such as ALLIED_ERP_ADMIN_PASSWORD instead of publishing them in app files.
 
 Admin user management
 - Log in as admin.

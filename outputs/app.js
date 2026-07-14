@@ -66,11 +66,11 @@ const seedData = {
     phoneNumberId: "",
   },
   users: [
-    { username: "admin", password: "admin123", role: "super_admin", name: "Main Admin" },
+    { username: "admin", password: "", role: "super_admin", name: "Main Admin" },
     { username: "credit", password: "", role: "credit", name: "Credit Dept." },
     { username: "shipping", password: "", role: "shipping", name: "Shipping" },
-    { username: "jordan", password: "sales123", role: "sales", name: "Jordan Lee" },
-    { username: "avery", password: "sales123", role: "sales", name: "Avery Brooks" },
+    { username: "jordan", password: "", role: "sales", name: "Jordan Lee" },
+    { username: "avery", password: "", role: "sales", name: "Avery Brooks" },
   ],
 };
 
@@ -181,16 +181,29 @@ function loadState() {
     const parsed = JSON.parse(saved);
     const merged = { ...structuredClone(seedData), ...parsed };
     if (!Array.isArray(merged.users) || !merged.users.length) merged.users = structuredClone(seedData.users);
-    seedData.users.forEach((seedUser) => {
-      if (!merged.users.some((user) => user.username === seedUser.username)) merged.users.push({ ...seedUser });
-    });
     return normalizeState(merged);
   } catch {
     return normalizeState(structuredClone(seedData));
   }
 }
 
+function ensureStarterUsers(data) {
+  if (!Array.isArray(data.users)) data.users = [];
+  seedData.users.forEach((seedUser) => {
+    const user = data.users.find((item) => item.username === seedUser.username);
+    if (!user) {
+      data.users.push({ ...seedUser });
+      return;
+    }
+    user.role = seedUser.username === "admin" ? "super_admin" : user.role || seedUser.role;
+    user.name = user.name || seedUser.name;
+    if (!user.password && seedUser.password) user.password = seedUser.password;
+  });
+  return data;
+}
+
 function normalizeState(data) {
+  ensureStarterUsers(data);
   data.users = (data.users || []).map((user) => (user.username === "admin" ? { ...user, role: "super_admin" } : user));
   data.orders = (data.orders || []).map((order) => {
     const status = order.status || "pending";
@@ -497,17 +510,63 @@ function renderLogin() {
         </form>
         <div class="login-help">
           <span>Ask admin for forgot password</span>
+          <button class="link-button" type="button" onclick="resetLoginCache()">Reset login cache</button>
         </div>
       </section>
     </main>
   `;
 }
 
-function login(event) {
+function resetLoginCache() {
+  currentUser = null;
+  state = normalizeState(structuredClone(seedData));
+  localStorage.removeItem("alliedErpUser");
+  localStorage.setItem("alliedErpState", JSON.stringify(state));
+  sessionStorage.setItem("alliedErpSkipSharedStateOnce", "1");
+  renderLogin();
+  toast("Login cache reset. Try signing in again.");
+}
+
+async function serverLogin(username, password) {
+  try {
+    const response = await fetch("./api/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    });
+    if (!response.ok) return null;
+    const data = await response.json();
+    return data.user || null;
+  } catch {
+    return null;
+  }
+}
+
+function rememberServerUser(user) {
+  if (!user?.username) return null;
+  const existing = state.users.find((item) => item.username === user.username);
+  const merged = {
+    ...(existing || {}),
+    ...user,
+    password: existing?.password || "",
+  };
+  if (!merged.name) merged.name = user.username;
+  if (!merged.role) merged.role = "sales";
+  if (existing) Object.assign(existing, merged);
+  else state.users.push(merged);
+  localStorage.setItem("alliedErpState", JSON.stringify(state));
+  return merged;
+}
+
+async function login(event) {
   event.preventDefault();
   const username = document.querySelector("#loginUsername").value.trim().toLowerCase();
-  const password = document.querySelector("#loginPassword").value;
-  const user = state.users.find((item) => item.username === username && item.password === password);
+  const password = document.querySelector("#loginPassword").value.trim();
+  const submitButton = event.submitter;
+  if (submitButton) submitButton.disabled = true;
+  const serverUser = await serverLogin(username, password);
+  const user = rememberServerUser(serverUser) || state.users.find((item) => item.username === username && item.password && item.password === password);
+  if (submitButton) submitButton.disabled = false;
   if (!user) {
     toast("Login failed. Check the username and password.");
     return;
@@ -2407,7 +2466,12 @@ function resetDemoData() {
 
 async function startApp() {
   await loadRuntimeFiles();
-  await loadSharedState();
+  const skipSharedStateOnce = sessionStorage.getItem("alliedErpSkipSharedStateOnce") === "1";
+  if (skipSharedStateOnce) {
+    sessionStorage.removeItem("alliedErpSkipSharedStateOnce");
+  } else {
+    await loadSharedState();
+  }
   render();
   window.setInterval(() => {
     if (shouldRefreshSharedState()) loadSharedState({ rerender: true });
