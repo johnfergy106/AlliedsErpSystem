@@ -6,7 +6,14 @@ const additionalHosts = (process.env.__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS || "
   .split(",")
   .map((host) => host.trim())
   .filter(Boolean);
-const allowedHosts = [".onrender.com", "onrender.com", renderHost, renderUrlHost, ...additionalHosts].filter(Boolean);
+const allowedHosts = [
+  "alliedserpsystem.onrender.com",
+  ".onrender.com",
+  "onrender.com",
+  renderHost,
+  renderUrlHost,
+  ...additionalHosts,
+].filter(Boolean);
 const port = Number(process.env.PORT) || 4173;
 
 export default defineConfig({
