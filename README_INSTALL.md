@@ -118,7 +118,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Install-AlliedERP.ps1
 
 5. Enter the company settings when prompted.
    - Use `0.0.0.0` for the network bind host.
-   - Use the server computer's LAN IP, such as `10.41.25.188`, for the network address employees will use.
+   - Use the server computer's LAN IP for the network address employees will use. The installer tries to detect it automatically.
 6. The installer copies the ERP to:
 
 ```text
@@ -156,12 +156,14 @@ C:\ProgramData\Allied Industrial Supplies\ERP\Logs\installer-error-log.txt
 The installed MVP opens in the browser at:
 
 ```text
-http://10.41.25.188:4173
+http://YOUR-SERVER-COMPUTER-IP:4173
 ```
 
-If the server computer has a different LAN IP address, use that address with the configured port.
+Use the network URL shown in the launcher window. Other computers must use your computer's IP address, not their own `localhost`.
 
-The browser stores the employee's ERP data locally. For a shared production database, use the hosted HTTPS deployment plan in `DEPLOY_HTTPS.md`.
+When employees connect to the ERP through the host computer URL, the installed launcher stores shared ERP data on the host computer so all roles see the same order updates, chats, statuses, customers, and product changes. Browser local storage is kept only as a fallback if the shared host API is unavailable.
+
+For a full hosted production database, use the hosted HTTPS deployment plan in `DEPLOY_HTTPS.md`.
 
 ## Uninstall
 

@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite --host 0.0.0.0 --port 4173",
-    "preview": "vite preview --host 0.0.0.0 --port 4173",
+    "dev": "vite --host 0.0.0.0",
+    "preview": "vite preview --host 0.0.0.0",
     "build": "node -e \"console.log('Static MVP build uses files in outputs/')\""
   },
   "devDependencies": {

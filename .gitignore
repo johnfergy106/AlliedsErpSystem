@@ -1,5 +1,6 @@
 # Generated packages
 dist/
+github-upload/
 outputs/Allied-ERP-Application/
 outputs/*.zip
 *.exe

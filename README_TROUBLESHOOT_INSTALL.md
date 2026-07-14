@@ -42,7 +42,7 @@ App startup log:
 8. Permissions blocked by Windows: run installer, uninstall, and reinstall scripts as Administrator.
 9. App trying to write inside Program Files: the fixed launcher writes logs and user config under AppData.
 10. Ports already in use: pick a different port during install, or edit `localPort` in config.
-11. Other computers cannot connect: confirm `bindHost` is `0.0.0.0`, confirm Windows Firewall allows TCP port `4173`, and open `http://10.41.25.188:4173` from the other computer.
+11. Other computers cannot connect: confirm `bindHost` is `0.0.0.0`, confirm Windows Firewall allows TCP port `4173`, and open the network URL shown in the launcher window from the other computer.
 
 ## Repair Commands
 

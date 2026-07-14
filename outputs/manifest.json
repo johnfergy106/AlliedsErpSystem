@@ -1,0 +1,19 @@
+{
+  "name": "Allied Industrial Supplies ERP",
+  "short_name": "Allied ERP",
+  "description": "Internal ERP MVP for sales orders, customers, products, and AI order verification.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#eef2f5",
+  "theme_color": "#176f73",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "./allied-logo.jpg",
+      "sizes": "512x512",
+      "type": "image/jpeg",
+      "purpose": "any maskable"
+    }
+  ]
+}

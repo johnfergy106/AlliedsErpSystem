@@ -18,13 +18,13 @@ Open PowerShell from the project folder and run:
 powershell -NoProfile -ExecutionPolicy Bypass -File outputs\start-allied-erp.ps1
 ```
 
-The app listens on:
+The app listens on your computer's network address, for example:
 
 ```text
-http://10.41.25.188:4173
+http://YOUR-SERVER-COMPUTER-IP:4173
 ```
 
-If your server computer has a different LAN IP address, update `outputs/config.json`.
+Use the network URL shown by the launcher. Other computers must use your computer's IP address, not their own `localhost`.
 
 ## Build Installer
 
@@ -44,7 +44,9 @@ Generated installer files are placed in `dist`.
 
 ## Important Storage Note
 
-The current MVP stores live ERP data in the browser on the computer using the app. For shared hosted production, use the hosted deployment guidance and database schema included in this repository.
+When the app is started from `outputs\start-allied-erp.ps1` or the installer, shared ERP data is saved on the host computer and all network users read/write the same orders, statuses, chats, customers, and products. Browser local storage is kept as a fallback if the shared host API is unavailable.
+
+For full hosted production, use the hosted deployment guidance and database schema included in this repository.
 
 ## Documentation
 
