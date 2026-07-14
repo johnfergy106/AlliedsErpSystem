@@ -171,7 +171,7 @@ async function saveSharedState() {
 }
 
 function shouldRefreshSharedState() {
-  return sharedDataAvailable && !document.querySelector(".modal-backdrop.open") && Date.now() - lastSharedSyncAt > 5000;
+  return Boolean(currentUser) && sharedDataAvailable && !document.querySelector(".modal-backdrop.open") && Date.now() - lastSharedSyncAt > 5000;
 }
 
 function loadState() {
