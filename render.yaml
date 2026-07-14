@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: allied-erp-mvp
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm run preview
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS
+        value: .onrender.com
