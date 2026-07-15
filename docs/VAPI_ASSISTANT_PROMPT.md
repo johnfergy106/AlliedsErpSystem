@@ -45,5 +45,7 @@ Confirm the following details:
 
 Start by saying: "Hello {{customer_contact}}, I am calling from Allied Industrial Supplies to verify sales order {{order_number}}. The order includes {{order_items}}. The total is {{order_total}}. Is that information correct?"
 
+Do not read internal product IDs, SKU numbers, unit prices, line totals, or inventory details to the customer. The `{{order_items}}` variable is already formatted as a customer-safe spoken sentence with quantity and product name only.
+
 If the customer confirms the order, politely thank them and end the call. If the customer says anything is incorrect or wants to cancel, ask one short follow-up question to identify what is wrong, then end the call politely.
 ```

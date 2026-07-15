@@ -201,17 +201,36 @@ function addressSentence(address = {}) {
   return [address.address, address.city, address.state, address.zip].filter(Boolean).join(", ");
 }
 
+function singularizeUnit(unit) {
+  const clean = String(unit || "").trim().toLowerCase();
+  const map = {
+    units: "unit",
+    unit: "unit",
+    cases: "case",
+    case: "case",
+    rolls: "roll",
+    roll: "roll",
+  };
+  return map[clean] || "unit";
+}
+
+function quantityUnitLabel(quantity, item = {}) {
+  const productName = String(item.name || "").toLowerCase();
+  const rawUnit = item.unit || item.uom || item.unitOfMeasure || "";
+  let unit = singularizeUnit(rawUnit);
+  if (!rawUnit && productName.includes("case")) unit = "case";
+  if (!rawUnit && productName.includes("roll")) unit = "roll";
+  return `${unit}${Number(quantity) === 1 ? "" : "s"}`;
+}
+
 function orderItemsSentence(items = []) {
   const lines = items.map((item) => {
     const quantity = Number(item.orderedQty || item.qty || 0);
-    const productName = item.name || item.sku || "item";
-    const unitPrice = formatMoney(item.unitPrice || item.price || 0);
-    const lineTotal = formatMoney(quantity * Number(item.unitPrice || item.price || 0));
+    const productName = item.name || "item";
     const quantityText = Number.isFinite(quantity) && quantity > 0 ? quantity.toLocaleString("en-US") : "0";
-    const sku = item.sku ? `, SKU ${item.sku}` : "";
-    return `${quantityText} units of ${productName}${sku}, at ${unitPrice} each, line total ${lineTotal}`;
+    return `${quantityText} ${quantityUnitLabel(quantity, item)} of ${productName}`;
   });
-  return lines.length ? `${joinSentenceParts(lines)}.` : "";
+  return lines.length ? `The order includes ${joinSentenceParts(lines)}.` : "";
 }
 
 function stringifyVariable(value) {
