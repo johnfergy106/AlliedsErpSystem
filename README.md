@@ -58,7 +58,7 @@ https://YOUR-ERP-DOMAIN/api/vapi/webhook
 
 The browser calls the ERP server at `/api/vapi/calls`; the Vapi API key is never stored in `app.js`, localStorage, GitHub, or the browser.
 
-The ERP sends sales order details as Vapi dynamic variables in `assistantOverrides.variableValues`. Use the prompt template in `docs/VAPI_ASSISTANT_PROMPT.md` so the assistant references variables like `{{order_number}}`, `{{customer_contact}}`, `{{order_items}}`, and `{{order_total}}`.
+The ERP sends sales order details as Vapi dynamic variables in `assistantOverrides.variableValues`. Use the prompt template in `README_VAPI_PROMPT.md` so the assistant references variables like `{{order_number}}`, `{{customer_contact}}`, `{{order_items}}`, and reference-only details such as `{{sku_list}}` only when the customer asks.
 
 ## Build Installer
 

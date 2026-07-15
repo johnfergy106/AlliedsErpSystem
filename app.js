@@ -60,17 +60,15 @@ const seedData = {
     },
   ],
   settings: {
-    vapiEndpoint: "",
-    vapiApiKey: "",
     assistantId: "",
     phoneNumberId: "",
   },
   users: [
-    { username: "admin", password: "admin123", role: "super_admin", name: "Main Admin" },
+    { username: "admin", password: "", role: "super_admin", name: "Main Admin" },
     { username: "credit", password: "", role: "credit", name: "Credit Dept." },
     { username: "shipping", password: "", role: "shipping", name: "Shipping" },
-    { username: "jordan", password: "sales123", role: "sales", name: "Jordan Lee" },
-    { username: "avery", password: "sales123", role: "sales", name: "Avery Brooks" },
+    { username: "jordan", password: "", role: "sales", name: "Jordan Lee" },
+    { username: "avery", password: "", role: "sales", name: "Avery Brooks" },
   ],
 };
 
@@ -144,6 +142,8 @@ function loadState() {
 }
 
 function normalizeState(data) {
+  data.settings = data.settings || {};
+  delete data.settings.vapiApiKey;
   data.users = (data.users || []).map((user) => (user.username === "admin" ? { ...user, role: "super_admin" } : user));
   data.orders = (data.orders || []).map((order) => {
     const status = order.status || "pending";
@@ -207,6 +207,7 @@ function statusLabels() {
   return {
     pending: "Pending",
     pending_ap: "Pending AP",
+    verification_in_progress: "Verification In Progress",
     verified: "Verified",
     issue: "Issue",
     credit_hold: "Credit Hold",
@@ -1536,37 +1537,26 @@ function usersView() {
 }
 
 function settingsView() {
-  const locked = !isAdmin();
-  const disabled = locked ? "disabled" : "";
   return `
     <div class="split">
       <div class="panel">
         <div class="panel-head"><h2 class="panel-title">Assistant Connection</h2></div>
-        <form class="panel-body form-grid" onsubmit="saveSettings(event)">
-          ${locked ? `<div class="field full"><div class="callout">Vapi connection settings are managed by admins.</div></div>` : ""}
+        <div class="panel-body form-grid">
+          <div class="field full"><div class="callout">Assistant Verification is configured securely on Render with VAPI_API_KEY, VAPI_ASSISTANT_ID, and VAPI_PHONE_NUMBER_ID. The API key is never saved in the browser.</div></div>
           <div class="field full">
-            <label for="vapiEndpoint">Verification endpoint</label>
-            <input id="vapiEndpoint" value="${html(state.settings.vapiEndpoint)}" placeholder="https://api.vapi.ai/call/web" ${disabled} />
-          </div>
-          <div class="field">
-            <label for="assistantId">Assistant ID</label>
-            <input id="assistantId" value="${html(state.settings.assistantId)}" placeholder="asst_..." ${disabled} />
-          </div>
-          <div class="field">
-            <label for="phoneNumberId">Phone number ID</label>
-            <input id="phoneNumberId" value="${html(state.settings.phoneNumberId)}" placeholder="phn_..." ${disabled} />
+            <label>ERP Verification Endpoint</label>
+            <input value="/api/vapi/calls" disabled />
           </div>
           <div class="field full">
-            <label for="vapiApiKey">API key</label>
-            <input id="vapiApiKey" type="password" value="${html(state.settings.vapiApiKey)}" placeholder="Stored locally for MVP testing" ${disabled} />
+            <label>Vapi Webhook URL</label>
+            <input value="/api/vapi/webhook" disabled />
           </div>
-          ${isAdmin() ? `<div class="field full"><button class="btn primary" type="submit">Save Connection</button></div>` : ""}
-        </form>
+        </div>
       </div>
       <div class="panel">
         <div class="panel-head"><h2 class="panel-title">Verification Payload</h2></div>
         <div class="panel-body">
-          <div class="callout">Orders can be verified manually with internal notes or sent to Assistant Verification from the Orders screen. Assistant Verification requires an endpoint here and can attach an MP3 recording when the service returns a recording URL.</div>
+          <div class="callout">Orders can be verified manually with internal notes or sent to Assistant Verification from the Orders screen. Assistant Verification starts an outbound Vapi call, then marks the order verified only after Vapi sends a successful completion webhook.</div>
         </div>
       </div>
     </div>
@@ -2156,18 +2146,7 @@ function deleteSelectedCustomers() {
 
 function saveSettings(event) {
   event.preventDefault();
-  if (!isAdmin()) {
-    toast("Only admins can edit Vapi connection settings.");
-    return;
-  }
-  state.settings = {
-    vapiEndpoint: document.querySelector("#vapiEndpoint").value.trim(),
-    vapiApiKey: document.querySelector("#vapiApiKey").value.trim(),
-    assistantId: document.querySelector("#assistantId").value.trim(),
-    phoneNumberId: document.querySelector("#phoneNumberId").value.trim(),
-  };
-  saveState();
-  toast("Vapi settings saved locally.");
+  toast("Assistant Verification is configured in Render environment variables.");
 }
 
 async function verifyOrderWithVapi(orderId) {
@@ -2181,8 +2160,9 @@ async function verifyOrderWithVapi(orderId) {
     toast("Assistant Verification is only for Old account types.");
     return;
   }
-  if (!state.settings.vapiEndpoint) {
-    toast("Add an Assistant Verification endpoint before using Assistant Verification.");
+  const customerPhoneNumber = preferredVerificationPhone(order);
+  if (!customerPhoneNumber) {
+    toast("Add a phone number or cell phone number before using Assistant Verification.");
     return;
   }
   const kickback = captureKickback(order);
@@ -2190,36 +2170,37 @@ async function verifyOrderWithVapi(orderId) {
   toast(`Sending ${order.id} to Assistant Verification...`);
   const payload = buildVerificationPayload(order);
   try {
-    const response = await fetch(state.settings.vapiEndpoint, {
+    const response = await fetch("./api/vapi/calls", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(state.settings.vapiApiKey ? { Authorization: `Bearer ${state.settings.vapiApiKey}` } : {}),
-      },
-      body: JSON.stringify(payload),
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        orderId: order.id,
+        customerPhoneNumber,
+        order: payload,
+      }),
     });
-    if (!response.ok) throw new Error(`Vapi returned ${response.status}`);
     const responseText = await response.text();
-    let vapiResult = {};
+    let result = {};
     try {
-      vapiResult = responseText ? JSON.parse(responseText) : {};
+      result = responseText ? JSON.parse(responseText) : {};
     } catch {
-      vapiResult = {};
+      result = {};
     }
-    const recordingUrl = extractRecordingUrl(vapiResult);
-    recordStatusChange(order, "verified", "Assistant verification completed.");
+    if (!response.ok || !result.ok) throw new Error(result.error || `Vapi returned ${response.status}`);
+    recordStatusChange(order, "verification_in_progress", `Assistant Verification call started. Vapi call ID: ${result.callId || "pending"}.`);
     order.verification = {
-      state: "verified",
+      state: "verification_in_progress",
       method: "Assistant",
-      summary: recordingUrl ? "Assistant verification completed and an MP3 recording is attached." : "Assistant verification completed. No recording URL was returned.",
+      summary: "Assistant Verification call is in progress. The order will be marked verified after Vapi confirms the completed call.",
       at: order.statusChangedAt,
-      verifiedBy: currentUser.name,
-      recordingUrl,
+      verifiedBy: "",
+      vapiCallId: result.callId || "",
+      vapiCallStatus: result.callStatus || "scheduled",
       ...kickback,
     };
     saveState();
     render();
-    toast(`${order.id} verified through Assistant Verification.`);
+    toast(`${order.id} Assistant Verification call started.`);
   } catch (error) {
     recordStatusChange(order, "issue", error.message);
     order.verification = { state: "issue", method: "Assistant", summary: error.message, at: order.statusChangedAt, verifiedBy: currentUser.name, ...kickback };

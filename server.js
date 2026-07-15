@@ -190,6 +190,10 @@ function formatMoney(value) {
   return amount.toLocaleString("en-US", { style: "currency", currency: "USD" });
 }
 
+function formatOptionalMoney(value) {
+  return hasMoneyValue(value) ? formatMoney(value) : "";
+}
+
 function joinSentenceParts(parts) {
   const cleanParts = parts.filter(Boolean);
   if (cleanParts.length <= 1) return cleanParts[0] || "";
@@ -210,6 +214,8 @@ function singularizeUnit(unit) {
     case: "case",
     rolls: "roll",
     roll: "roll",
+    boxes: "box",
+    box: "box",
   };
   return map[clean] || "unit";
 }
@@ -220,17 +226,97 @@ function quantityUnitLabel(quantity, item = {}) {
   let unit = singularizeUnit(rawUnit);
   if (!rawUnit && productName.includes("case")) unit = "case";
   if (!rawUnit && productName.includes("roll")) unit = "roll";
-  return `${unit}${Number(quantity) === 1 ? "" : "s"}`;
+  if (!rawUnit && productName.includes("box")) unit = "box";
+  if (Number(quantity) === 1) return unit;
+  const pluralLabels = { unit: "units", case: "cases", roll: "rolls", box: "boxes" };
+  return pluralLabels[unit] || `${unit}s`;
+}
+
+function itemQuantity(item = {}) {
+  const quantity = Number(item.orderedQty || item.qty || 0);
+  return Number.isFinite(quantity) && quantity > 0 ? quantity : 0;
+}
+
+function quantityPhrase(item = {}) {
+  const quantity = itemQuantity(item);
+  const quantityText = quantity > 0 ? quantity.toLocaleString("en-US") : "0";
+  return `${quantityText} ${quantityUnitLabel(quantity, item)}`;
+}
+
+function hasMoneyValue(value) {
+  return value !== "" && value !== null && value !== undefined && Number.isFinite(Number(value));
+}
+
+function itemUnitPrice(item = {}) {
+  return hasMoneyValue(item.unitPrice) ? Number(item.unitPrice) : hasMoneyValue(item.price) ? Number(item.price) : null;
+}
+
+function itemLineTotal(item = {}) {
+  if (hasMoneyValue(item.lineTotal)) return Number(item.lineTotal);
+  const unitPrice = itemUnitPrice(item);
+  const quantity = itemQuantity(item);
+  return unitPrice === null ? null : quantity * unitPrice;
+}
+
+function productName(item = {}) {
+  return String(item.name || "").trim();
 }
 
 function orderItemsSentence(items = []) {
   const lines = items.map((item) => {
-    const quantity = Number(item.orderedQty || item.qty || 0);
-    const productName = item.name || "item";
-    const quantityText = Number.isFinite(quantity) && quantity > 0 ? quantity.toLocaleString("en-US") : "0";
-    return `${quantityText} ${quantityUnitLabel(quantity, item)} of ${productName}`;
-  });
+    const name = productName(item);
+    if (!name) return "";
+    return `${quantityPhrase(item)} of ${name}`;
+  }).filter(Boolean);
   return lines.length ? `The order includes ${joinSentenceParts(lines)}.` : "";
+}
+
+function itemDetailsSentence(items = []) {
+  const lines = items.map((item, index) => {
+    const name = productName(item);
+    if (!name) return "";
+    const sku = item.sku ? String(item.sku) : "not available";
+    const unitPrice = itemUnitPrice(item);
+    const lineTotal = itemLineTotal(item);
+    return `Item ${index + 1}: ${name}. Quantity: ${quantityPhrase(item)}. SKU: ${sku}. Unit price: ${unitPrice === null ? "not available" : formatMoney(unitPrice)}. Line total: ${lineTotal === null ? "not available" : formatMoney(lineTotal)}.`;
+  });
+  return lines.filter(Boolean).join(" ");
+}
+
+function skuListSentence(items = []) {
+  return items
+    .map((item) => {
+      const name = productName(item);
+      if (!name) return "";
+      return `${name}: ${item.sku ? `SKU ${item.sku}` : "SKU not available"}.`;
+    })
+    .filter(Boolean)
+    .join(" ");
+}
+
+function unitPriceDetailsSentence(items = []) {
+  return items
+    .map((item) => {
+      const name = productName(item);
+      if (!name) return "";
+      const unitPrice = itemUnitPrice(item);
+      const unit = singularizeUnit(item.unit || item.uom || item.unitOfMeasure || quantityUnitLabel(1, item));
+      return `${name}: ${unitPrice === null ? "unit price not available" : `${formatMoney(unitPrice)} per ${unit}`}.`;
+    })
+    .filter(Boolean)
+    .join(" ");
+}
+
+function lineTotalDetailsSentence(items = []) {
+  return items
+    .map((item) => {
+      const name = productName(item);
+      if (!name) return "";
+      const lineTotal = itemLineTotal(item);
+      return `${name} line total: ${lineTotal === null ? "not available" : formatMoney(lineTotal)}.`;
+    })
+    .filter(Boolean)
+    .join(" ");
 }
 
 function stringifyVariable(value) {
@@ -241,26 +327,62 @@ function stringifyVariable(value) {
   return String(value);
 }
 
+function billingAddress(order = {}) {
+  if (typeof order.billTo === "string") return order.billTo;
+  if (order.billTo && typeof order.billTo === "object") return addressSentence(order.billTo);
+  if (order.billingAddress && typeof order.billingAddress === "object") return addressSentence(order.billingAddress);
+  return order.billingAddress || "";
+}
+
+function promoNumber(order = {}, customer = {}) {
+  return order.promoTicket?.promoNumber || order.promoNumber || customer.promoNumber || "";
+}
+
+function creditCardOnFile(order = {}) {
+  return Boolean(order.creditCardOnFile || order.creditCard?.name || order.creditCard?.last4 || order.creditCard?.expiration) ? "Yes" : "";
+}
+
 function buildVapiVariableValues(requestBody) {
   const order = requestBody.order?.order || requestBody.order || {};
   const customer = order.customer || {};
   const orderNumber = order.id || requestBody.orderId || "";
+  const items = Array.isArray(order.items) ? order.items : [];
   const values = {
     order_number: String(orderNumber || ""),
     buyer_name: String(order.buyerName || ""),
     customer_name: customer.name || "",
     customer_contact: customer.contact || order.buyerName || customer.name || "",
-    account_number: order.accountNumber || "",
-    account_status: order.accountStatus || "",
     sales_rep: order.salesRep || order.rep || "",
     order_date: order.date || "",
     ship_date: order.shipDate || "",
     shipping_address: addressSentence(order.address || {}),
     order_notes: order.notes || "",
-    order_total: formatMoney(order.total || 0),
-    order_items: orderItemsSentence(order.items || []),
+    order_total: formatOptionalMoney(order.total),
+    order_items: orderItemsSentence(items),
+    item_details: itemDetailsSentence(items),
+    sku_list: skuListSentence(items),
+    unit_price_details: unitPriceDetailsSentence(items),
+    line_total_details: lineTotalDetailsSentence(items),
+    account_number: order.accountNumber || "",
+    account_status: order.accountStatus || "",
+    purchase_order_number: order.purchaseOrder || customer.purchaseOrder || "",
+    billing_address: billingAddress(order),
+    tracking_number: order.trackingInfo || order.trackingNumber || "",
+    promo_number: promoNumber(order, customer),
+    credit_card_on_file: creditCardOnFile(order),
   };
   return Object.fromEntries(Object.entries(values).map(([key, value]) => [key, stringifyVariable(value)]));
+}
+
+function maskLogSample(value) {
+  const text = String(value || "");
+  if (!text) return "";
+  if (text.length <= 12) return text;
+  return `${text.slice(0, 8)}...${text.slice(-4)}`;
+}
+
+function maskedVariableSamples(values = {}) {
+  return Object.fromEntries(Object.entries(values).map(([key, value]) => [key, maskLogSample(value)]));
 }
 
 const server = createServer(async (request, response) => {
@@ -348,7 +470,8 @@ const server = createServer(async (request, response) => {
           source: "allied-erp",
         },
       };
-      console.log("Vapi variable values:", JSON.stringify(vapiPayload.assistantOverrides.variableValues, null, 2));
+      console.log("Vapi variable names:", Object.keys(vapiPayload.assistantOverrides.variableValues).join(", "));
+      console.log("Vapi variable sample values:", JSON.stringify(maskedVariableSamples(vapiPayload.assistantOverrides.variableValues), null, 2));
 
       const vapiResponse = await fetch(vapiApiUrl, {
         method: "POST",
