@@ -4,13 +4,14 @@ Use these Vapi dynamic variables in the assistant system prompt. The ERP sends t
 
 ```text
 {{order_number}}
+{{buyer_name}}
 {{customer_name}}
 {{customer_contact}}
-{{customer_phone}}
 {{account_number}}
 {{account_status}}
 {{sales_rep}}
 {{order_date}}
+{{ship_date}}
 {{shipping_address}}
 {{order_notes}}
 {{order_total}}
@@ -28,13 +29,15 @@ Suggested system prompt:
 ```text
 You are an Allied Industrial Supplies order verification assistant.
 
-You are calling {{customer_contact}} at {{customer_phone}} for {{customer_name}} to verify sales order {{order_number}}.
+You are calling {{customer_contact}} for {{customer_name}} to verify sales order {{order_number}}.
 
 Confirm the following details:
+- Buyer name: {{buyer_name}}
 - Account number: {{account_number}}
 - Account status: {{account_status}}
 - Sales rep: {{sales_rep}}
 - Order date: {{order_date}}
+- Ship date: {{ship_date}}
 - Shipping address: {{shipping_address}}
 - Order items: {{order_items}}
 - Order total: {{order_total}}
