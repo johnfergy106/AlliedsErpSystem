@@ -40,6 +40,24 @@ ALLIED_ERP_JORDAN_PASSWORD
 ALLIED_ERP_AVERY_PASSWORD
 ```
 
+## Vapi Assistant Verification
+
+Set these Render environment variables for outbound order verification calls:
+
+```text
+VAPI_API_KEY
+VAPI_ASSISTANT_ID
+VAPI_PHONE_NUMBER_ID
+```
+
+Configure the Vapi assistant/server webhook URL to:
+
+```text
+https://YOUR-ERP-DOMAIN/api/vapi/webhook
+```
+
+The browser calls the ERP server at `/api/vapi/calls`; the Vapi API key is never stored in `app.js`, localStorage, GitHub, or the browser.
+
 ## Build Installer
 
 Create the ZIP installer:

@@ -26,6 +26,7 @@ const envPasswordKeys = {
   jordan: "ALLIED_ERP_JORDAN_PASSWORD",
   avery: "ALLIED_ERP_AVERY_PASSWORD",
 };
+const vapiApiUrl = process.env.VAPI_API_URL || "https://api.vapi.ai/call";
 
 const contentTypes = {
   ".html": "text/html; charset=utf-8",
@@ -57,6 +58,11 @@ async function readSharedStateJson() {
   }
 }
 
+async function writeSharedStateJson(state) {
+  await mkdir(dataRoot, { recursive: true });
+  await writeFile(sharedStatePath, JSON.stringify(state, null, 2), "utf8");
+}
+
 function safeUser(user) {
   const { password, ...publicUser } = user;
   return publicUser;
@@ -65,6 +71,118 @@ function safeUser(user) {
 function envPasswordFor(username) {
   const directKey = envPasswordKeys[username] || `ALLIED_ERP_${username.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_PASSWORD`;
   return process.env[directKey] || "";
+}
+
+function parseJsonBody(request) {
+  return new Promise((resolve, reject) => {
+    let body = "";
+    request.setEncoding("utf8");
+    request.on("data", (chunk) => {
+      body += chunk;
+      if (body.length > 1024 * 1024) {
+        reject(new Error("Request body is too large."));
+        request.destroy();
+      }
+    });
+    request.on("end", () => {
+      try {
+        resolve(body ? JSON.parse(body) : {});
+      } catch {
+        reject(new Error("Request body must be valid JSON."));
+      }
+    });
+    request.on("error", reject);
+  });
+}
+
+function normalizePhoneNumber(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (raw.startsWith("+")) {
+    const e164 = `+${raw.slice(1).replace(/\D/g, "")}`;
+    return /^\+[1-9]\d{7,14}$/.test(e164) ? e164 : "";
+  }
+  const digits = raw.replace(/\D/g, "");
+  if (digits.length === 10) return `+1${digits}`;
+  if (digits.length === 11 && digits.startsWith("1")) return `+${digits}`;
+  return "";
+}
+
+function maskPhoneNumber(phoneNumber) {
+  const visible = phoneNumber.slice(-4);
+  return `${"*".repeat(Math.max(0, phoneNumber.length - 4))}${visible}`;
+}
+
+function sendJson(response, statusCode, body) {
+  response.writeHead(statusCode, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Cache-Control": "no-store",
+  });
+  response.end(JSON.stringify(body));
+}
+
+function extractVapiCall(message) {
+  return message?.call || message?.data?.call || message?.callData || message?.data || message || {};
+}
+
+function extractVapiCallId(message) {
+  const call = extractVapiCall(message);
+  return call.id || message?.callId || message?.data?.callId || "";
+}
+
+function extractRecordingUrl(value) {
+  if (!value || typeof value !== "object") return "";
+  const candidates = [
+    value.recordingUrl,
+    value.recording_url,
+    value.recording?.url,
+    value.artifact?.recordingUrl,
+    value.artifact?.recording_url,
+    value.call?.recordingUrl,
+    value.call?.artifact?.recordingUrl,
+    value.data?.recordingUrl,
+    value.data?.artifact?.recordingUrl,
+  ];
+  const direct = candidates.find((item) => typeof item === "string" && item);
+  if (direct) return direct;
+  for (const item of Object.values(value)) {
+    if (item && typeof item === "object") {
+      const nested = extractRecordingUrl(item);
+      if (nested) return nested;
+    }
+  }
+  return "";
+}
+
+function isSuccessfulVapiCompletion(message) {
+  const type = message?.type || message?.message?.type || "";
+  const call = extractVapiCall(message);
+  const status = String(call.status || message?.status || "").toLowerCase();
+  const endedReason = String(call.endedReason || message?.endedReason || "").toLowerCase();
+  const analysisSuccess = call.analysis?.successEvaluation || message?.analysis?.successEvaluation;
+  if (analysisSuccess === false || analysisSuccess === "false") return false;
+  if (["failed", "error", "errored", "canceled", "cancelled"].includes(status)) return false;
+  if (endedReason.includes("error") || endedReason.includes("failed")) return false;
+  return ["end-of-call-report", "call-ended", "call.completed", "call-completed"].includes(type) || ["ended", "completed"].includes(status);
+}
+
+function statusLabel(status) {
+  const labels = {
+    verification_in_progress: "Verification In Progress",
+    verified: "Verified",
+    issue: "Issue",
+  };
+  return labels[status] || status || "";
+}
+
+function recordOrderStatus(order, status, notes = "", by = "Vapi") {
+  const at = new Date().toLocaleString([], { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+  order.status = status;
+  order.statusChangedAt = at;
+  order.statusChangedBy = by;
+  if (!Array.isArray(order.statusHistory)) order.statusHistory = [];
+  order.statusHistory.push({ status, label: statusLabel(status), at, by, notes });
+  return at;
 }
 
 const server = createServer(async (request, response) => {
@@ -97,10 +215,7 @@ const server = createServer(async (request, response) => {
     }
 
     if (requestUrl.pathname === "/api/login" && request.method === "POST") {
-      let body = "";
-      request.setEncoding("utf8");
-      for await (const chunk of request) body += chunk;
-      const credentials = JSON.parse(body || "{}");
+      const credentials = await parseJsonBody(request);
       const username = String(credentials.username || "").trim().toLowerCase();
       const password = String(credentials.password || "").trim();
       const sharedState = await readSharedStateJson();
@@ -120,6 +235,112 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (requestUrl.pathname === "/api/vapi/calls" && request.method === "POST") {
+      const apiKey = process.env.VAPI_API_KEY || "";
+      const assistantId = process.env.VAPI_ASSISTANT_ID || "";
+      const phoneNumberId = process.env.VAPI_PHONE_NUMBER_ID || "";
+      if (!apiKey || !assistantId || !phoneNumberId) {
+        sendJson(response, 500, { ok: false, error: "Vapi is not configured. Add VAPI_API_KEY, VAPI_ASSISTANT_ID, and VAPI_PHONE_NUMBER_ID in Render." });
+        return;
+      }
+
+      const requestBody = await parseJsonBody(request);
+      const orderId = String(requestBody.orderId || "").trim();
+      const customerPhoneNumber = normalizePhoneNumber(requestBody.customerPhoneNumber);
+      if (!orderId) {
+        sendJson(response, 400, { ok: false, error: "Order ID is required." });
+        return;
+      }
+      if (!customerPhoneNumber) {
+        sendJson(response, 400, { ok: false, error: "Customer phone number is blank or invalid. Enter a valid US phone number or E.164 number." });
+        return;
+      }
+
+      console.log(`[vapi] creating outbound call for order ${orderId} to ${maskPhoneNumber(customerPhoneNumber)}`);
+      const vapiPayload = {
+        assistantId,
+        phoneNumberId,
+        customer: { number: customerPhoneNumber },
+        metadata: {
+          orderId,
+          source: "allied-erp",
+        },
+      };
+
+      const vapiResponse = await fetch(vapiApiUrl, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(vapiPayload),
+      });
+      const responseText = await vapiResponse.text();
+      let vapiResult = {};
+      try {
+        vapiResult = responseText ? JSON.parse(responseText) : {};
+      } catch {
+        vapiResult = { message: responseText };
+      }
+
+      if (!vapiResponse.ok) {
+        const errorMessage = vapiResult.message || vapiResult.error || vapiResult.detail || `Vapi rejected the call with status ${vapiResponse.status}.`;
+        console.error(`[vapi] call rejected for order ${orderId}: ${errorMessage}`);
+        sendJson(response, vapiResponse.status, { ok: false, error: errorMessage, details: vapiResult });
+        return;
+      }
+
+      const call = vapiResult.call || vapiResult;
+      sendJson(response, 200, {
+        ok: true,
+        callId: call.id || "",
+        callStatus: call.status || "scheduled",
+        phoneNumber: customerPhoneNumber,
+      });
+      return;
+    }
+
+    if (requestUrl.pathname === "/api/vapi/webhook" && request.method === "POST") {
+      const message = await parseJsonBody(request);
+      const call = extractVapiCall(message);
+      const callId = extractVapiCallId(message);
+      const orderId = String(call.metadata?.orderId || message.metadata?.orderId || message.orderId || "").trim();
+      if (!orderId && !callId) {
+        sendJson(response, 200, { ok: true, ignored: true });
+        return;
+      }
+
+      const sharedState = await readSharedStateJson();
+      const orders = Array.isArray(sharedState.orders) ? sharedState.orders : [];
+      const order = orders.find((item) => item.id === orderId || item.verification?.vapiCallId === callId);
+      if (!order) {
+        sendJson(response, 200, { ok: true, ignored: true, reason: "Order not found." });
+        return;
+      }
+
+      if (isSuccessfulVapiCompletion(message)) {
+        const recordingUrl = extractRecordingUrl(message);
+        const at = recordOrderStatus(order, "verified", "Vapi call completed successfully.", "Vapi");
+        order.verification = {
+          ...(order.verification || {}),
+          state: "verified",
+          method: "Assistant",
+          summary: recordingUrl ? "Assistant verification completed and a recording is attached." : "Assistant verification completed successfully.",
+          at,
+          verifiedBy: "Vapi",
+          vapiCallId: callId || order.verification?.vapiCallId || "",
+          vapiCallStatus: call.status || "completed",
+          recordingUrl: recordingUrl || order.verification?.recordingUrl || "",
+        };
+        await writeSharedStateJson(sharedState);
+        sendJson(response, 200, { ok: true, orderId: order.id, status: "verified" });
+        return;
+      }
+
+      sendJson(response, 200, { ok: true, ignored: true, status: call.status || message.type || "" });
+      return;
+    }
+
     const filePath = resolveRequestPath(request.url || "/");
     if (!filePath) {
       response.writeHead(403, { "Content-Type": "text/plain; charset=utf-8" });
@@ -134,7 +355,13 @@ const server = createServer(async (request, response) => {
       "Cache-Control": extension === ".html" ? "no-store" : "public, max-age=300",
     });
     response.end(body);
-  } catch {
+  } catch (error) {
+    const requestUrl = new URL(request.url || "/", "http://localhost");
+    if (requestUrl.pathname.startsWith("/api/")) {
+      const status = error.message === "Request body must be valid JSON." ? 400 : 500;
+      sendJson(response, status, { ok: false, error: error.message || "Server error." });
+      return;
+    }
     response.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
     response.end("Not found");
   }

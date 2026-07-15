@@ -17,6 +17,8 @@ Login accounts
 - Use Reset login cache on the sign-in screen if a hosted browser keeps rejecting a valid login after an update.
 - Change any starter or temporary passwords before using the app for live company records.
 - On Render, store hosted passwords in environment variables such as ALLIED_ERP_ADMIN_PASSWORD instead of publishing them in app files.
+- On Render, store Assistant Verification values in VAPI_API_KEY, VAPI_ASSISTANT_ID, and VAPI_PHONE_NUMBER_ID.
+- Set the Vapi webhook URL to https://YOUR-ERP-DOMAIN/api/vapi/webhook so completed calls can mark orders verified.
 
 Admin user management
 - Log in as admin.
