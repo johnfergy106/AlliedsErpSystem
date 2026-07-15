@@ -185,6 +185,67 @@ function recordOrderStatus(order, status, notes = "", by = "Vapi") {
   return at;
 }
 
+function formatMoney(value) {
+  const amount = Number(value || 0);
+  return amount.toLocaleString("en-US", { style: "currency", currency: "USD" });
+}
+
+function joinSentenceParts(parts) {
+  const cleanParts = parts.filter(Boolean);
+  if (cleanParts.length <= 1) return cleanParts[0] || "";
+  if (cleanParts.length === 2) return `${cleanParts[0]}, and ${cleanParts[1]}`;
+  return `${cleanParts.slice(0, -1).join(", ")}, and ${cleanParts.at(-1)}`;
+}
+
+function accountStatusLabel(status) {
+  const labels = { old: "Old", new: "New", rehash: "Rehash" };
+  return labels[String(status || "").toLowerCase()] || String(status || "");
+}
+
+function addressSentence(address = {}) {
+  return [address.address, address.city, address.state, address.zip].filter(Boolean).join(", ");
+}
+
+function orderItemsSentence(items = []) {
+  const lines = items.map((item) => {
+    const quantity = Number(item.orderedQty || item.qty || 0);
+    const productName = item.name || item.sku || "item";
+    const unitPrice = formatMoney(item.unitPrice || item.price || 0);
+    const quantityText = Number.isFinite(quantity) && quantity > 0 ? quantity.toLocaleString("en-US") : "0";
+    return `${quantityText} units of ${productName} at ${unitPrice} each`;
+  });
+  return joinSentenceParts(lines);
+}
+
+function stringifyVariable(value) {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "number") return Number.isFinite(value) ? String(value) : "";
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  return String(value);
+}
+
+function buildVapiVariableValues(requestBody, normalizedPhoneNumber) {
+  const order = requestBody.order?.order || requestBody.order || {};
+  const customer = order.customer || {};
+  const orderNumber = order.creditOrderNumber || order.orderNumber || order.id || requestBody.orderId || "";
+  const values = {
+    order_number: orderNumber,
+    customer_name: customer.name || "",
+    customer_contact: customer.contact || order.buyerName || customer.name || "",
+    customer_phone: normalizedPhoneNumber,
+    account_number: order.accountNumber || "",
+    account_status: accountStatusLabel(order.accountStatus || ""),
+    sales_rep: order.salesRep || order.rep || "",
+    order_date: order.date || "",
+    shipping_address: addressSentence(order.address || {}),
+    order_notes: order.notes || "",
+    order_total: formatMoney(order.total || 0),
+    order_items: orderItemsSentence(order.items || []),
+  };
+  return Object.fromEntries(Object.entries(values).map(([key, value]) => [key, stringifyVariable(value)]));
+}
+
 const server = createServer(async (request, response) => {
   try {
     const requestUrl = new URL(request.url || "/", "http://localhost");
@@ -257,10 +318,15 @@ const server = createServer(async (request, response) => {
       }
 
       console.log(`[vapi] creating outbound call for order ${orderId} to ${maskPhoneNumber(customerPhoneNumber)}`);
+      const variableValues = buildVapiVariableValues(requestBody, customerPhoneNumber);
+      console.log(`[vapi] variable values sent for order ${orderId}: ${Object.keys(variableValues).join(", ")}`);
       const vapiPayload = {
         assistantId,
         phoneNumberId,
         customer: { number: customerPhoneNumber },
+        assistantOverrides: {
+          variableValues,
+        },
         metadata: {
           orderId,
           source: "allied-erp",
@@ -295,7 +361,7 @@ const server = createServer(async (request, response) => {
         ok: true,
         callId: call.id || "",
         callStatus: call.status || "scheduled",
-        phoneNumber: customerPhoneNumber,
+        phoneNumber: maskPhoneNumber(customerPhoneNumber),
       });
       return;
     }
