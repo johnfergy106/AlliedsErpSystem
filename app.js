@@ -147,12 +147,12 @@ function normalizeState(data) {
   data.deletedCustomers = Array.isArray(data.deletedCustomers) ? data.deletedCustomers : [];
   data.deletedProducts = Array.isArray(data.deletedProducts) ? data.deletedProducts : [];
   data.deletedUsers = Array.isArray(data.deletedUsers) ? data.deletedUsers : [];
-  data.deletedOrders = Array.isArray(data.deletedOrders) ? data.deletedOrders : [];
+  data.deletedOrders = [];
   data.users = (data.users || []).map((user) => (user.username === "admin" ? { ...user, role: "super_admin" } : user));
   data.users = data.users.filter((user) => !data.deletedUsers.includes(user.username) || user.role === "super_admin");
   data.customers = (data.customers || []).filter((customer) => !data.deletedCustomers.includes(customer.id));
   data.products = (data.products || []).filter((product) => !data.deletedProducts.includes(product.id));
-  data.orders = (data.orders || []).filter((order) => !data.deletedOrders.includes(order.id)).map((order) => {
+  data.orders = (data.orders || []).map((order) => {
     const status = order.status || "pending";
     const at = order.statusChangedAt || order.verification?.at || order.date || "";
     const by = order.statusChangedBy || order.verification?.verifiedBy || "";

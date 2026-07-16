@@ -144,12 +144,11 @@ function mergeOrderRecord(existing = {}, incoming = {}) {
   };
 }
 
-function mergeOrders(existing = [], incoming = [], deleted = []) {
-  const deletedSet = new Set(deleted);
+function mergeOrders(existing = [], incoming = []) {
   const records = new Map();
   [...existing, ...incoming].forEach((order) => {
     const id = order?.id;
-    if (!id || deletedSet.has(String(id))) return;
+    if (!id) return;
     const previous = records.get(String(id));
     records.set(String(id), previous ? mergeOrderRecord(previous, order) : order);
   });
@@ -157,7 +156,7 @@ function mergeOrders(existing = [], incoming = [], deleted = []) {
 }
 
 function mergeSharedState(existing = {}, incoming = {}) {
-  const deletedOrders = uniqueList(existing.deletedOrders, incoming.deletedOrders);
+  const deletedOrders = [];
   const deletedCustomers = uniqueList(existing.deletedCustomers, incoming.deletedCustomers);
   const deletedProducts = uniqueList(existing.deletedProducts, incoming.deletedProducts);
   const deletedUsers = uniqueList(existing.deletedUsers, incoming.deletedUsers);
@@ -170,7 +169,7 @@ function mergeSharedState(existing = {}, incoming = {}) {
     deletedProducts,
     deletedUsers,
   };
-  merged.orders = mergeOrders(existing.orders, incoming.orders, deletedOrders);
+  merged.orders = mergeOrders(existing.orders, incoming.orders);
   merged.customers = mergeByKey(existing.customers, incoming.customers, "id", deletedCustomers);
   merged.products = mergeByKey(existing.products, incoming.products, "id", deletedProducts);
   merged.users = mergeByKey(existing.users, incoming.users, "username", deletedUsers);

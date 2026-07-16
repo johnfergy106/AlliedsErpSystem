@@ -119,17 +119,19 @@ test("new customers remain saved while old deleted customer ids stay blocked", a
   assert.equal(state.customers.some((customer) => customer.id === "C-1002" && customer.name === "New Customer"), true);
 });
 
-test("deleted sales orders stay permanently deleted when stale data is posted", async () => {
+test("deleted sales orders are hidden for one user instead of removed globally", async () => {
   await postState({
-    orders: [{ id: "SO-DELETE", customerId: "C-9", rep: "Jordan Lee" }],
-    deletedOrders: ["SO-DELETE"],
+    orders: [{ id: "SO-HIDDEN", customerId: "C-9", rep: "Jordan Lee" }],
   });
   await postState({
-    orders: [{ id: "SO-DELETE", customerId: "C-9", rep: "Jordan Lee" }],
+    orders: [{ id: "SO-HIDDEN", customerId: "C-9", rep: "Jordan Lee", hiddenFor: ["sales"] }],
+    deletedOrders: ["SO-HIDDEN"],
   });
   const state = await getState();
-  assert.equal(state.orders.some((order) => order.id === "SO-DELETE"), false);
-  assert.equal(state.deletedOrders.includes("SO-DELETE"), true);
+  const order = state.orders.find((item) => item.id === "SO-HIDDEN");
+  assert.ok(order);
+  assert.deepEqual(order.hiddenFor, ["sales"]);
+  assert.equal(state.deletedOrders.includes("SO-HIDDEN"), false);
 });
 
 test("deleted products stay permanently deleted when stale data is posted", async () => {
