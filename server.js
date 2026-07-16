@@ -92,6 +92,7 @@ function mergeByKey(existing = [], incoming = [], key, deleted = []) {
 }
 
 function mergeSharedState(existing = {}, incoming = {}) {
+  const deletedOrders = uniqueList(existing.deletedOrders, incoming.deletedOrders);
   const deletedCustomers = uniqueList(existing.deletedCustomers, incoming.deletedCustomers);
   const deletedProducts = uniqueList(existing.deletedProducts, incoming.deletedProducts);
   const deletedUsers = uniqueList(existing.deletedUsers, incoming.deletedUsers);
@@ -99,11 +100,12 @@ function mergeSharedState(existing = {}, incoming = {}) {
     ...existing,
     ...incoming,
     settings: { ...(existing.settings || {}), ...(incoming.settings || {}) },
+    deletedOrders,
     deletedCustomers,
     deletedProducts,
     deletedUsers,
   };
-  merged.orders = mergeByKey(existing.orders, incoming.orders, "id");
+  merged.orders = mergeByKey(existing.orders, incoming.orders, "id", deletedOrders);
   merged.customers = mergeByKey(existing.customers, incoming.customers, "id", deletedCustomers);
   merged.products = mergeByKey(existing.products, incoming.products, "id", deletedProducts);
   merged.users = mergeByKey(existing.users, incoming.users, "username", deletedUsers);

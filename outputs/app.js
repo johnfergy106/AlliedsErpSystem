@@ -184,7 +184,7 @@ async function saveSharedState() {
 }
 
 function shouldRefreshSharedState() {
-  return Boolean(currentUser) && sharedDataAvailable && !document.querySelector(".modal-backdrop.open") && Date.now() - lastSharedSyncAt > 5000;
+  return Boolean(currentUser) && sharedDataAvailable && !sharedDataSaving && !sharedDataSaveQueued && !document.querySelector(".modal-backdrop.open") && Date.now() - lastSharedSyncAt > 5000;
 }
 
 function loadState() {
@@ -222,11 +222,12 @@ function normalizeState(data) {
   data.deletedCustomers = Array.isArray(data.deletedCustomers) ? data.deletedCustomers : [];
   data.deletedProducts = Array.isArray(data.deletedProducts) ? data.deletedProducts : [];
   data.deletedUsers = Array.isArray(data.deletedUsers) ? data.deletedUsers : [];
+  data.deletedOrders = Array.isArray(data.deletedOrders) ? data.deletedOrders : [];
   data.users = (data.users || []).map((user) => (user.username === "admin" ? { ...user, role: "super_admin" } : user));
   data.users = data.users.filter((user) => !data.deletedUsers.includes(user.username) || user.role === "super_admin");
   data.customers = (data.customers || []).filter((customer) => !data.deletedCustomers.includes(customer.id));
   data.products = (data.products || []).filter((product) => !data.deletedProducts.includes(product.id));
-  data.orders = (data.orders || []).map((order) => {
+  data.orders = (data.orders || []).filter((order) => !data.deletedOrders.includes(order.id)).map((order) => {
     const status = order.status || "pending";
     const at = order.statusChangedAt || order.verification?.at || order.date || "";
     const by = order.statusChangedBy || order.verification?.verifiedBy || "";
@@ -2090,16 +2091,16 @@ function saveOrder(event) {
 function deleteOrder(orderId) {
   const order = state.orders.find((item) => item.id === orderId);
   if (!canAccessOrder(order)) return toast("You can only delete orders you can access.");
-  if (!confirm(`Remove sales order ${order.id} from your dashboard and order list? Other users will keep their copy.`)) return;
+  if (!confirm(`Permanently delete sales order ${order.id}? This will remove it for all users and cannot be undone.`)) return;
   if (!isAdmin() && !isCredit() && !isShipping()) {
     const customer = customerById(order.customerId);
     if (customer && !customer.owner) customer.owner = currentUser.name;
   }
-  if (!Array.isArray(order.hiddenFor)) order.hiddenFor = [];
-  if (!order.hiddenFor.includes(currentUser.username)) order.hiddenFor.push(currentUser.username);
+  rememberDeleted("Orders", orderId);
+  state.orders = state.orders.filter((item) => item.id !== orderId);
   saveState();
   render();
-  toast(`${order.id} removed from your list.`);
+  toast(`${order.id} permanently deleted.`);
 }
 
 function toggleAll(selector, checked) {
@@ -2113,21 +2114,19 @@ function deleteSelectedOrders() {
   if (!ids.length) return toast("Select at least one order.");
   const allowed = ids.filter((id) => canAccessOrder(state.orders.find((order) => order.id === id)));
   if (!allowed.length) return toast("No selected orders can be deleted.");
-  if (!confirm(`Remove ${allowed.length} selected order${allowed.length === 1 ? "" : "s"} from your dashboard and order list? Other users will keep their copy.`)) return;
+  if (!confirm(`Permanently delete ${allowed.length} selected order${allowed.length === 1 ? "" : "s"} for all users? This cannot be undone.`)) return;
   allowed.forEach((id) => {
     const order = state.orders.find((item) => item.id === id);
     if (order && !isAdmin() && !isCredit() && !isShipping()) {
       const customer = customerById(order.customerId);
       if (customer && !customer.owner) customer.owner = currentUser.name;
     }
-    if (order) {
-      if (!Array.isArray(order.hiddenFor)) order.hiddenFor = [];
-      if (!order.hiddenFor.includes(currentUser.username)) order.hiddenFor.push(currentUser.username);
-    }
+    rememberDeleted("Orders", id);
   });
+  state.orders = state.orders.filter((order) => !allowed.includes(order.id));
   saveState();
   render();
-  toast("Selected orders removed from your list.");
+  toast("Selected orders permanently deleted.");
 }
 
 function openProductForm(id = null) {

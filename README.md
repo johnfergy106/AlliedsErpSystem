@@ -82,6 +82,8 @@ When the app is started from `outputs\start-allied-erp.ps1` or the installer, sh
 
 On Render, ERP records are saved by the Node server in `ALLIED_ERP_DATA_DIR`. The included `render.yaml` mounts a persistent disk at `/var/data/allied-erp` and sets `ALLIED_ERP_DATA_DIR` to that path. Do not remove the disk or point this setting at a temporary deploy folder, or data can be lost after a Render restart/redeploy.
 
+Deleted customers, sales orders, products, and users are tracked with server-side delete markers so stale browser sessions cannot bring them back.
+
 For full hosted production, use the hosted deployment guidance and database schema included in this repository.
 
 ## Documentation
