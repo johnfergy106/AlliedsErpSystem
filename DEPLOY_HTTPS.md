@@ -6,9 +6,9 @@ Deploy Allied ERP as a private employee-only HTTPS application with central auth
 
 ## Important Current-State Note
 
-The current MVP is a static browser app that stores data in browser `localStorage`. That is acceptable for a local MVP, but it is not enough for a shared hosted ERP.
+The current MVP is a browser app served by a Node server. Browser `localStorage` is only a fallback cache; shared hosted ERP data is stored by the server in `ALLIED_ERP_DATA_DIR`.
 
-Before hosted production use, add a backend API and database so orders, customers, products, users, verification records, chat messages, status history, and packing lists are stored centrally.
+The included Render setup mounts a persistent disk at `/var/data/allied-erp` and stores `shared-state.json` there. Do not use a temporary deploy folder for `ALLIED_ERP_DATA_DIR`.
 
 ## Recommended Production Architecture
 
@@ -20,7 +20,7 @@ Before hosted production use, add a backend API and database so orders, customer
 - Authentication: server-side sessions or OIDC/Microsoft Entra ID
 - Password storage: Argon2id or bcrypt hashes, never plain text
 - Secrets: environment variables or a managed secret vault
-- Backups: automated daily database backups with restore testing
+- Backups: persistent-disk JSON backups for the MVP; automated daily database backups after PostgreSQL migration
 
 ## Role-Based Permissions
 
@@ -44,7 +44,7 @@ Production requirements:
 
 - `FORCE_HTTPS=true`
 - Strong `SESSION_SECRET`
-- Real `DATABASE_URL`
+- Persistent `ALLIED_ERP_DATA_DIR` for the MVP, or real `DATABASE_URL` after PostgreSQL migration
 - Assistant API key stored server-side only
 - Database SSL enabled when hosted remotely
 
@@ -66,7 +66,7 @@ Production requirements:
 
 Minimum backup schedule:
 
-- Daily full database backup
+- Daily full data backup
 - 30 day retention
 - Weekly restore test
 - Keep one encrypted offsite copy
@@ -81,6 +81,13 @@ Example restore command:
 
 ```bash
 pg_restore --clean --if-exists --dbname "$DATABASE_URL" "/var/backups/allied-erp/allied-erp-YYYY-MM-DD.dump"
+```
+
+Current Render MVP backup location:
+
+```text
+/var/data/allied-erp/shared-state.json
+/var/data/allied-erp/backups/shared-state-latest.json
 ```
 
 ## Future Release Process

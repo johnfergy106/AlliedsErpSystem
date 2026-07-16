@@ -36,6 +36,8 @@ Admin user management
 Notes
 - Data is saved in the browser on the device where the app is used.
 - When started with start-allied-erp.bat or the installer, shared ERP data is saved on the host computer so all network users see the same orders, statuses, chats, customers, and products.
+- On hosted Render deployments, shared ERP data must be saved in the persistent ALLIED_ERP_DATA_DIR folder. The included render.yaml uses /var/data/allied-erp.
+- The server writes shared-state.json atomically and keeps backup copies in a backups folder under ALLIED_ERP_DATA_DIR.
 - Company install settings are saved in config.json.
 - The app release number is saved in version.json.
 - The local server listens on 0.0.0.0 by default so employees on the same network can connect.

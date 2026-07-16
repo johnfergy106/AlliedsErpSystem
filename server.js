@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,6 +12,7 @@ const port = Number(process.env.PORT) || 4173;
 const host = process.env.HOST || "0.0.0.0";
 const dataRoot = process.env.ALLIED_ERP_DATA_DIR || path.join(__dirname, ".data");
 const sharedStatePath = path.join(dataRoot, "shared-state.json");
+const backupRoot = path.join(dataRoot, "backups");
 const starterUsers = [
   { username: "admin", role: "super_admin", name: "Main Admin" },
   { username: "credit", role: "credit", name: "Credit Dept." },
@@ -60,7 +61,53 @@ async function readSharedStateJson() {
 
 async function writeSharedStateJson(state) {
   await mkdir(dataRoot, { recursive: true });
-  await writeFile(sharedStatePath, JSON.stringify(state, null, 2), "utf8");
+  const body = JSON.stringify(state, null, 2);
+  const temporaryPath = `${sharedStatePath}.tmp`;
+  if (existsSync(sharedStatePath)) {
+    await mkdir(backupRoot, { recursive: true });
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    await copyFile(sharedStatePath, path.join(backupRoot, `shared-state-${stamp}.json`)).catch(() => {});
+    await copyFile(sharedStatePath, path.join(backupRoot, "shared-state-latest.json")).catch(() => {});
+  }
+  await writeFile(temporaryPath, body, "utf8");
+  await rename(temporaryPath, sharedStatePath);
+}
+
+function uniqueList(...lists) {
+  return [...new Set(lists.flat().filter(Boolean).map(String))];
+}
+
+function mergeByKey(existing = [], incoming = [], key, deleted = []) {
+  const deletedSet = new Set(deleted);
+  const records = new Map();
+  existing.forEach((item) => {
+    const id = item?.[key];
+    if (id && !deletedSet.has(String(id))) records.set(String(id), item);
+  });
+  incoming.forEach((item) => {
+    const id = item?.[key];
+    if (id && !deletedSet.has(String(id))) records.set(String(id), item);
+  });
+  return [...records.values()];
+}
+
+function mergeSharedState(existing = {}, incoming = {}) {
+  const deletedCustomers = uniqueList(existing.deletedCustomers, incoming.deletedCustomers);
+  const deletedProducts = uniqueList(existing.deletedProducts, incoming.deletedProducts);
+  const deletedUsers = uniqueList(existing.deletedUsers, incoming.deletedUsers);
+  const merged = {
+    ...existing,
+    ...incoming,
+    settings: { ...(existing.settings || {}), ...(incoming.settings || {}) },
+    deletedCustomers,
+    deletedProducts,
+    deletedUsers,
+  };
+  merged.orders = mergeByKey(existing.orders, incoming.orders, "id");
+  merged.customers = mergeByKey(existing.customers, incoming.customers, "id", deletedCustomers);
+  merged.products = mergeByKey(existing.products, incoming.products, "id", deletedProducts);
+  merged.users = mergeByKey(existing.users, incoming.users, "username", deletedUsers);
+  return merged;
 }
 
 function safeUser(user) {
@@ -400,17 +447,15 @@ const server = createServer(async (request, response) => {
     }
 
     if (requestUrl.pathname === "/api/state" && request.method === "POST") {
-      let body = "";
-      request.setEncoding("utf8");
-      for await (const chunk of request) body += chunk;
-      JSON.parse(body);
-      await mkdir(dataRoot, { recursive: true });
-      await writeFile(sharedStatePath, body, "utf8");
+      const incomingState = await parseJsonBody(request);
+      const existingState = await readSharedStateJson();
+      const mergedState = mergeSharedState(existingState, incomingState);
+      await writeSharedStateJson(mergedState);
       response.writeHead(200, {
         "Content-Type": "application/json; charset=utf-8",
         "Cache-Control": "no-store",
       });
-      response.end(JSON.stringify({ ok: true }));
+      response.end(JSON.stringify({ ok: true, savedAt: new Date().toISOString(), state: mergedState }));
       return;
     }
 

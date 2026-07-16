@@ -5,8 +5,14 @@ services:
     plan: free
     buildCommand: npm install && npm run build
     startCommand: npm start
+    disk:
+      name: allied-erp-data
+      mountPath: /var/data/allied-erp
+      sizeGB: 1
     envVars:
       - key: NODE_ENV
         value: production
+      - key: ALLIED_ERP_DATA_DIR
+        value: /var/data/allied-erp
       - key: __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS
         value: .onrender.com

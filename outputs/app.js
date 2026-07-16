@@ -83,6 +83,7 @@ let appConfig = {
 };
 let sharedDataAvailable = false;
 let sharedDataSaving = false;
+let sharedDataSaveQueued = false;
 let lastSharedSyncAt = 0;
 let state = loadState();
 let currentUser = loadCurrentUser();
@@ -151,7 +152,10 @@ async function loadSharedState({ rerender = false } = {}) {
 }
 
 async function saveSharedState() {
-  if (sharedDataSaving) return;
+  if (sharedDataSaving) {
+    sharedDataSaveQueued = true;
+    return;
+  }
   sharedDataSaving = true;
   try {
     const response = await fetch("./api/state", {
@@ -160,11 +164,22 @@ async function saveSharedState() {
       body: JSON.stringify(state),
     });
     sharedDataAvailable = response.ok;
-    if (response.ok) lastSharedSyncAt = Date.now();
+    if (response.ok) {
+      const result = await response.json().catch(() => ({}));
+      if (result.state?.orders && result.state?.customers && result.state?.products && result.state?.users) {
+        state = normalizeState({ ...structuredClone(seedData), ...result.state });
+        localStorage.setItem("alliedErpState", JSON.stringify(state));
+      }
+      lastSharedSyncAt = Date.now();
+    }
   } catch {
     sharedDataAvailable = false;
   } finally {
     sharedDataSaving = false;
+    if (sharedDataSaveQueued) {
+      sharedDataSaveQueued = false;
+      saveSharedState();
+    }
   }
 }
 
@@ -204,7 +219,13 @@ function normalizeState(data) {
   ensureStarterUsers(data);
   data.settings = data.settings || {};
   delete data.settings.vapiApiKey;
+  data.deletedCustomers = Array.isArray(data.deletedCustomers) ? data.deletedCustomers : [];
+  data.deletedProducts = Array.isArray(data.deletedProducts) ? data.deletedProducts : [];
+  data.deletedUsers = Array.isArray(data.deletedUsers) ? data.deletedUsers : [];
   data.users = (data.users || []).map((user) => (user.username === "admin" ? { ...user, role: "super_admin" } : user));
+  data.users = data.users.filter((user) => !data.deletedUsers.includes(user.username) || user.role === "super_admin");
+  data.customers = (data.customers || []).filter((customer) => !data.deletedCustomers.includes(customer.id));
+  data.products = (data.products || []).filter((product) => !data.deletedProducts.includes(product.id));
   data.orders = (data.orders || []).map((order) => {
     const status = order.status || "pending";
     const at = order.statusChangedAt || order.verification?.at || order.date || "";
@@ -220,6 +241,12 @@ function normalizeState(data) {
     };
   });
   return data;
+}
+
+function rememberDeleted(type, id) {
+  const key = `deleted${type}`;
+  if (!Array.isArray(state[key])) state[key] = [];
+  if (id && !state[key].includes(id)) state[key].push(id);
 }
 
 function saveState() {
@@ -1745,6 +1772,7 @@ function deleteUser(username) {
   if (!user || user.role === "super_admin") return toast("Super Admin users cannot be deleted in this MVP.");
   const hasOrders = state.orders.some((order) => order.rep === user.name);
   if (hasOrders && !confirm(`${user.name} has sales orders. Delete this login anyway? Orders will remain assigned to that rep name.`)) return;
+  rememberDeleted("Users", username);
   state.users = state.users.filter((item) => item.username !== username);
   saveState();
   closeModal();
@@ -2153,6 +2181,7 @@ function deleteProduct(productId) {
     ? `${product.sku} is used on ${orderCount} order${orderCount === 1 ? "" : "s"}. Delete it from the product catalog anyway? Existing orders will keep the line but show a missing product name.`
     : `Delete product ${product.sku}? This cannot be undone.`;
   if (!confirm(message)) return;
+  rememberDeleted("Products", productId);
   state.products = state.products.filter((item) => item.id !== productId);
   saveState();
   render();
@@ -2259,6 +2288,7 @@ function deleteCustomer(customerId) {
   const orderCount = state.orders.filter((order) => order.customerId === customerId).length;
   if (orderCount && !confirm(`${customer.name} is linked to ${orderCount} sales order${orderCount === 1 ? "" : "s"}. Delete the customer anyway? Existing orders will show Unknown customer.`)) return;
   if (!orderCount && !confirm(`Delete customer ${customer.name}? This cannot be undone.`)) return;
+  rememberDeleted("Customers", customerId);
   state.customers = state.customers.filter((item) => item.id !== customerId);
   saveState();
   render();
@@ -2271,6 +2301,7 @@ function deleteSelectedCustomers() {
   const allowed = ids.filter((id) => canAccessCustomer(id));
   if (!allowed.length) return toast("No selected customers can be deleted.");
   if (!confirm(`Delete ${allowed.length} selected customer${allowed.length === 1 ? "" : "s"}? This cannot be undone.`)) return;
+  allowed.forEach((id) => rememberDeleted("Customers", id));
   state.customers = state.customers.filter((customer) => !allowed.includes(customer.id));
   saveState();
   render();
