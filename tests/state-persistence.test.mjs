@@ -144,3 +144,31 @@ test("deleted products stay permanently deleted when stale data is posted", asyn
   assert.equal(state.products.some((product) => product.id === "P-DELETE"), false);
   assert.equal(state.deletedProducts.includes("P-DELETE"), true);
 });
+
+test("sent to shipping status is not overwritten by a stale verified order copy", async () => {
+  await postState({
+    orders: [{
+      id: "SO-SHIP",
+      customerId: "C-SHIP",
+      rep: "Jordan Lee",
+      status: "sent_to_shipping",
+      statusChangedAt: "07/16/2026, 09:30 AM",
+      statusHistory: [{ status: "sent_to_shipping", at: "07/16/2026, 09:30 AM", by: "Credit Dept.", notes: "" }],
+    }],
+  });
+  await postState({
+    orders: [{
+      id: "SO-SHIP",
+      customerId: "C-SHIP",
+      rep: "Jordan Lee",
+      status: "verified",
+      statusChangedAt: "07/16/2026, 09:00 AM",
+      statusHistory: [{ status: "verified", at: "07/16/2026, 09:00 AM", by: "Vapi", notes: "" }],
+    }],
+  });
+  const state = await getState();
+  const order = state.orders.find((item) => item.id === "SO-SHIP");
+  assert.equal(order.status, "sent_to_shipping");
+  assert.equal(order.statusHistory.some((entry) => entry.status === "verified"), true);
+  assert.equal(order.statusHistory.some((entry) => entry.status === "sent_to_shipping"), true);
+});

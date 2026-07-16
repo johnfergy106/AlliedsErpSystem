@@ -91,6 +91,71 @@ function mergeByKey(existing = [], incoming = [], key, deleted = []) {
   return [...records.values()];
 }
 
+const statusRank = {
+  pending: 10,
+  issue: 20,
+  verification_in_progress: 30,
+  verified: 40,
+  pending_ap: 50,
+  credit_hold: 60,
+  kickback_pending: 65,
+  sent_to_shipping: 80,
+  partial_ship: 90,
+  order_shipped: 100,
+  completed: 110,
+  cancelled: 120,
+};
+
+function statusTime(order = {}) {
+  const parsed = Date.parse(order.statusChangedAt || order.verification?.at || order.updatedAt || order.date || "");
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function orderRank(order = {}) {
+  return statusRank[order.status] || 0;
+}
+
+function mergeStatusHistory(...orders) {
+  const history = new Map();
+  orders.flatMap((order) => (Array.isArray(order?.statusHistory) ? order.statusHistory : [])).forEach((entry) => {
+    const key = [entry.status, entry.at, entry.by, entry.notes].map((value) => value || "").join("|");
+    history.set(key, entry);
+  });
+  return [...history.values()];
+}
+
+function betterOrder(existing = {}, incoming = {}) {
+  const existingTime = statusTime(existing);
+  const incomingTime = statusTime(incoming);
+  if (incomingTime > existingTime) return incoming;
+  if (existingTime > incomingTime) return existing;
+  return orderRank(incoming) >= orderRank(existing) ? incoming : existing;
+}
+
+function mergeOrderRecord(existing = {}, incoming = {}) {
+  const winner = betterOrder(existing, incoming);
+  const loser = winner === incoming ? existing : incoming;
+  return {
+    ...loser,
+    ...winner,
+    messages: mergeByKey(loser.messages, winner.messages, "id"),
+    statusHistory: mergeStatusHistory(loser, winner),
+    hiddenFor: uniqueList(loser.hiddenFor, winner.hiddenFor),
+  };
+}
+
+function mergeOrders(existing = [], incoming = [], deleted = []) {
+  const deletedSet = new Set(deleted);
+  const records = new Map();
+  [...existing, ...incoming].forEach((order) => {
+    const id = order?.id;
+    if (!id || deletedSet.has(String(id))) return;
+    const previous = records.get(String(id));
+    records.set(String(id), previous ? mergeOrderRecord(previous, order) : order);
+  });
+  return [...records.values()];
+}
+
 function mergeSharedState(existing = {}, incoming = {}) {
   const deletedOrders = uniqueList(existing.deletedOrders, incoming.deletedOrders);
   const deletedCustomers = uniqueList(existing.deletedCustomers, incoming.deletedCustomers);
@@ -105,7 +170,7 @@ function mergeSharedState(existing = {}, incoming = {}) {
     deletedProducts,
     deletedUsers,
   };
-  merged.orders = mergeByKey(existing.orders, incoming.orders, "id", deletedOrders);
+  merged.orders = mergeOrders(existing.orders, incoming.orders, deletedOrders);
   merged.customers = mergeByKey(existing.customers, incoming.customers, "id", deletedCustomers);
   merged.products = mergeByKey(existing.products, incoming.products, "id", deletedProducts);
   merged.users = mergeByKey(existing.users, incoming.users, "username", deletedUsers);

@@ -235,7 +235,7 @@ function visibleOrders() {
   const notHidden = (order) => !(order.hiddenFor || []).includes(currentUser?.username);
   if (isAdmin()) return state.orders.filter(notHidden);
   if (isCredit()) return state.orders.filter((order) => notHidden(order) && (["verified", "pending_ap", "credit_hold", "kickback_pending", "sent_to_shipping", "order_shipped", "completed"].includes(order.status) || (order.status === "cancelled" && orderHadAnyStatus(order, ["verified", "pending_ap", "credit_hold", "kickback_pending", "sent_to_shipping"]))));
-  if (isShipping()) return state.orders.filter((order) => notHidden(order) && (["sent_to_shipping", "partial_ship", "order_shipped", "completed"].includes(order.status) || (order.status === "cancelled" && orderHadAnyStatus(order, ["sent_to_shipping", "partial_ship"]))));
+  if (isShipping()) return state.orders.filter((order) => notHidden(order) && (["sent_to_shipping", "partial_ship", "order_shipped", "completed"].includes(order.status) || orderHadAnyStatus(order, ["sent_to_shipping", "partial_ship", "order_shipped", "completed"]) || (order.status === "cancelled" && orderHadAnyStatus(order, ["sent_to_shipping", "partial_ship"]))));
   return state.orders.filter((order) => notHidden(order) && order.rep === currentUser?.name);
 }
 
