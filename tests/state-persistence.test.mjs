@@ -103,6 +103,22 @@ test("deleted customers stay deleted when an older browser posts stale data", as
   assert.deepEqual(state.deletedCustomers, ["C-1"]);
 });
 
+test("new customers remain saved while old deleted customer ids stay blocked", async () => {
+  await postState({
+    customers: [{ id: "C-1001", name: "Deleted Customer" }],
+    deletedCustomers: ["C-1001"],
+  });
+  await postState({
+    customers: [
+      { id: "C-1001", name: "Deleted Customer Stale Copy" },
+      { id: "C-1002", name: "New Customer" },
+    ],
+  });
+  const state = await getState();
+  assert.equal(state.customers.some((customer) => customer.id === "C-1001"), false);
+  assert.equal(state.customers.some((customer) => customer.id === "C-1002" && customer.name === "New Customer"), true);
+});
+
 test("deleted sales orders stay permanently deleted when stale data is posted", async () => {
   await postState({
     orders: [{ id: "SO-DELETE", customerId: "C-9", rep: "Jordan Lee" }],

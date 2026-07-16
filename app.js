@@ -144,8 +144,15 @@ function loadState() {
 function normalizeState(data) {
   data.settings = data.settings || {};
   delete data.settings.vapiApiKey;
+  data.deletedCustomers = Array.isArray(data.deletedCustomers) ? data.deletedCustomers : [];
+  data.deletedProducts = Array.isArray(data.deletedProducts) ? data.deletedProducts : [];
+  data.deletedUsers = Array.isArray(data.deletedUsers) ? data.deletedUsers : [];
+  data.deletedOrders = Array.isArray(data.deletedOrders) ? data.deletedOrders : [];
   data.users = (data.users || []).map((user) => (user.username === "admin" ? { ...user, role: "super_admin" } : user));
-  data.orders = (data.orders || []).map((order) => {
+  data.users = data.users.filter((user) => !data.deletedUsers.includes(user.username) || user.role === "super_admin");
+  data.customers = (data.customers || []).filter((customer) => !data.deletedCustomers.includes(customer.id));
+  data.products = (data.products || []).filter((product) => !data.deletedProducts.includes(product.id));
+  data.orders = (data.orders || []).filter((order) => !data.deletedOrders.includes(order.id)).map((order) => {
     const status = order.status || "pending";
     const at = order.statusChangedAt || order.verification?.at || order.date || "";
     const by = order.statusChangedBy || order.verification?.verifiedBy || "";
@@ -257,7 +264,12 @@ function statusFilterControl() {
 }
 
 function uid(prefix, existing) {
-  const nums = existing
+  const deletedIdsByPrefix = {
+    C: state.deletedCustomers || [],
+    P: state.deletedProducts || [],
+    SO: state.deletedOrders || [],
+  };
+  const nums = [...existing, ...(deletedIdsByPrefix[prefix] || []).map((id) => ({ id }))]
     .map((item) => Number(String(item.id).replace(/\D/g, "")))
     .filter(Boolean);
   return `${prefix}-${Math.max(1000, ...nums) + 1}`;

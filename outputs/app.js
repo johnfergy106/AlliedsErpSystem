@@ -346,7 +346,12 @@ function statusFilterControl() {
 }
 
 function uid(prefix, existing) {
-  const nums = existing
+  const deletedIdsByPrefix = {
+    C: state.deletedCustomers || [],
+    P: state.deletedProducts || [],
+    SO: state.deletedOrders || [],
+  };
+  const nums = [...existing, ...(deletedIdsByPrefix[prefix] || []).map((id) => ({ id }))]
     .map((item) => Number(String(item.id).replace(/\D/g, "")))
     .filter(Boolean);
   return `${prefix}-${Math.max(1000, ...nums) + 1}`;
