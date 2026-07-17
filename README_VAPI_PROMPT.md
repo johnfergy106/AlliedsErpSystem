@@ -52,3 +52,28 @@ Never guess a price, SKU, quantity, address, date, or account detail.
 If a requested value is blank, say that the information is not available in the order record.
 Confirm corrections clearly and repeat the corrected information back to the customer.
 ```
+
+## Webhook Setup
+
+Set the Vapi end-of-call webhook URL to:
+
+```text
+https://erp.alliedsupplies.net/api/vapi/webhook
+```
+
+If `VAPI_WEBHOOK_SECRET` is configured in Render, send the same value from Vapi in `x-vapi-secret`, `x-webhook-secret`, `x-allied-webhook-secret`, or `Authorization: Bearer <secret>`.
+
+Use structured analysis when available and return one of these final outcomes:
+
+```text
+VERIFIED
+CANCELLED
+VOICEMAIL
+NO_ANSWER
+CALLBACK_REQUESTED
+TRANSFERRED
+FAILED
+UNKNOWN
+```
+
+The ERP uses the webhook and structured analysis to update order status. The prompt alone should not be treated as the source of truth.

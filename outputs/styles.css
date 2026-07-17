@@ -473,6 +473,41 @@ tr:last-child td {
   color: #086b4b;
 }
 
+.status.verification-status {
+  border: 1px solid transparent;
+  font-size: 11px;
+}
+
+.status.verification-status.pending {
+  background: #eef2f6;
+  color: #52606d;
+}
+
+.status.verification-status.calling {
+  background: #e7e2fb;
+  color: #4d3192;
+}
+
+.status.verification-status.voicemail {
+  background: #fff3d8;
+  color: #76520b;
+}
+
+.status.verification-status.callback_requested {
+  background: #edf0ff;
+  color: #354a9f;
+}
+
+.status.verification-status.no_answer {
+  background: #f0e5e2;
+  color: #7a2e22;
+}
+
+.status.verification-status.failed {
+  background: #fde4e1;
+  color: var(--danger);
+}
+
 .status-cell {
   display: grid;
   gap: 5px;

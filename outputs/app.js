@@ -237,6 +237,8 @@ function normalizeState(data) {
       statusChangedAt: at,
       statusChangedBy: by,
       statusHistory: Array.isArray(order.statusHistory) && order.statusHistory.length ? order.statusHistory : [{ status, label: statusLabel(status), at, by, notes: order.verification?.summary || "" }],
+      verificationHistory: Array.isArray(order.verificationHistory) ? order.verificationHistory : [],
+      processedVapiCallIds: Array.isArray(order.processedVapiCallIds) ? order.processedVapiCallIds : [],
       creditHoldNotes: order.creditHoldNotes || order.verification?.creditHoldNotes || "",
       hiddenFor: Array.isArray(order.hiddenFor) ? order.hiddenFor : [],
     };
@@ -867,6 +869,36 @@ function statusBadge(status) {
   return `<span class="status ${status}">${statusLabel(status)}</span>`;
 }
 
+function verificationStatusKey(order) {
+  const state = String(order.verification?.state || "").toLowerCase();
+  if (order.status === "verification_in_progress" || state === "verification_in_progress") return "calling";
+  if (order.status === "verified" || state === "verified") return "verified";
+  if (order.status === "cancelled" || state === "cancelled") return "cancelled";
+  if (state === "voicemail") return "voicemail";
+  if (state === "callback_requested") return "callback_requested";
+  if (state === "no_answer") return "no_answer";
+  if (state === "failed" || state === "issue" || order.status === "issue") return "failed";
+  return "pending";
+}
+
+function verificationStatusLabel(key) {
+  return {
+    pending: "Pending",
+    calling: "Calling",
+    verified: "Verified",
+    cancelled: "Cancelled",
+    voicemail: "Voicemail",
+    callback_requested: "Callback Requested",
+    no_answer: "No Answer",
+    failed: "Failed",
+  }[key] || "Pending";
+}
+
+function verificationStatusBadge(order) {
+  const key = verificationStatusKey(order);
+  return `<span class="status verification-status ${key}">Verification: ${verificationStatusLabel(key)}</span>`;
+}
+
 function kickbackLabel(order) {
   const status = order.verification?.kickbackStatus || order.kickbackStatus || "None";
   if (!status || status === "None") return "";
@@ -893,6 +925,7 @@ function statusCell(order) {
   return `
     <div class="status-cell">
       ${statusBadge(order.status)}
+      ${verificationStatusBadge(order)}
       ${statusChangedLabel(order)}
       ${order.status === "verified" && order.verification?.verifiedBy ? `<div class="metric-note">Verified by ${html(order.verification.verifiedBy)}</div>` : ""}
       ${order.creditHoldNotes ? `<div class="metric-note">Credit Hold: ${html(order.creditHoldNotes)}</div>` : ""}
@@ -1475,6 +1508,17 @@ function printPackingList(orderId) {
 function verificationRecordHtml(order) {
   const customer = customerById(order.customerId) || {};
   const followUp = order.followUp || {};
+  const historyRows = (order.verificationHistory || []).map((entry) => `
+    <tr>
+      <td>${html([entry.date, entry.time].filter(Boolean).join(" "))}</td>
+      <td>${html(entry.outcome || "")}</td>
+      <td>${html(entry.callId || "")}</td>
+      <td>${html(entry.duration || "")}</td>
+      <td>${html(entry.phoneNumber || "")}</td>
+      <td>${html(entry.assistantName || "")}</td>
+    </tr>
+    ${entry.transcript ? `<tr><td colspan="6"><strong>Transcript:</strong> <span class="muted">${html(entry.transcript)}</span></td></tr>` : ""}
+  `).join("");
   return `<!doctype html>
 <html lang="en">
   <head>
@@ -1490,6 +1534,9 @@ function verificationRecordHtml(order) {
       .box { border: 1px solid #d8dee6; border-radius: 8px; padding: 14px; margin-top: 14px; }
       .row { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; border-bottom: 1px solid #eef2f5; }
       .row:last-child { border-bottom: 0; }
+      table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+      th, td { border-bottom: 1px solid #eef2f5; padding: 8px; text-align: left; font-size: 12px; vertical-align: top; }
+      th { color: #5b6673; text-transform: uppercase; font-size: 11px; background: #f8fafb; }
       .print-actions { display: flex; justify-content: flex-end; gap: 10px; margin-bottom: 14px; }
       button { min-height: 38px; border: 1px solid #d8dee6; border-radius: 6px; background: #176f73; color: #fff; padding: 8px 12px; cursor: pointer; }
       @media print { .print-actions { display: none; } .doc { padding: 0; } }
@@ -1518,6 +1565,7 @@ function verificationRecordHtml(order) {
         <h2>Verification Notes</h2>
         <div class="muted">${html(order.verification?.summary || "No verification notes recorded.")}</div>
       </section>
+      ${historyRows ? `<section class="box"><h2>Verification History</h2><table><thead><tr><th>Date/Time</th><th>Outcome</th><th>Call ID</th><th>Duration</th><th>Phone</th><th>Assistant</th></tr></thead><tbody>${historyRows}</tbody></table></section>` : ""}
       ${order.verification?.kickbackNotes || order.kickbackNotes ? `<section class="box"><h2>Kickback Notes</h2><div class="muted">${html(order.verification?.kickbackNotes || order.kickbackNotes)}</div></section>` : ""}
       ${order.creditHoldNotes || order.verification?.creditHoldNotes ? `<section class="box"><h2>Credit Hold Notes</h2><div class="muted">${html(order.creditHoldNotes || order.verification?.creditHoldNotes)}</div></section>` : ""}
       ${followUp.notes ? `<section class="box"><h2>Follow Up Notes</h2><div class="muted">${html(followUp.notes)}</div></section>` : ""}
