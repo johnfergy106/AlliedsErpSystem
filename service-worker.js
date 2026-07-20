@@ -1,4 +1,4 @@
-const CACHE_NAME = "allied-erp-v66";
+const CACHE_NAME = "allied-erp-v67";
 const APP_ASSETS = [
   "./",
   "./index.html",

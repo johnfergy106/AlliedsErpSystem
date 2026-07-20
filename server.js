@@ -304,6 +304,24 @@ function sendJson(response, statusCode, body) {
   response.end(JSON.stringify(body));
 }
 
+function apiOrderStatusSnapshot(order = {}) {
+  return {
+    orderId: order.id || "",
+    status: order.status || "",
+    verificationState: order.verification?.state || "",
+    verificationCallStatus: order.verification?.vapiCallStatus || "",
+    displayedByFrontend: "order.status + order.verification.state",
+  };
+}
+
+function logApiOrderStatus(stage, orders = []) {
+  const tracked = orders
+    .filter((order) => order?.verification?.vapiCallId || order?.status === "verification_in_progress" || order?.status === "verified" || order?.status === "cancelled")
+    .slice(0, 8)
+    .map(apiOrderStatusSnapshot);
+  console.log(`[api-state] ${stage}: ${JSON.stringify(tracked)}`);
+}
+
 function extractVapiCall(message) {
   return message?.message?.call || message?.call || message?.data?.call || message?.callData || message?.data || message || {};
 }
@@ -1245,20 +1263,25 @@ const server = createServer(async (request, response) => {
     const requestUrl = new URL(request.url || "/", "http://localhost");
 
     if (requestUrl.pathname === "/api/state" && request.method === "GET") {
-      const body = existsSync(sharedStatePath) ? await readFile(sharedStatePath) : Buffer.from("{}", "utf8");
+      const sharedState = await readSharedStateJson();
+      logApiOrderStatus("API response sent to frontend", Array.isArray(sharedState.orders) ? sharedState.orders : []);
       response.writeHead(200, {
         "Content-Type": "application/json; charset=utf-8",
         "Cache-Control": "no-store",
       });
-      response.end(body);
+      response.end(JSON.stringify(sharedState));
       return;
     }
 
     if (requestUrl.pathname === "/api/state" && request.method === "POST") {
       const incomingState = await parseJsonBody(request);
       const existingState = await readSharedStateJson();
+      logApiOrderStatus("database value before browser save merge", Array.isArray(existingState.orders) ? existingState.orders : []);
+      logApiOrderStatus("frontend value received", Array.isArray(incomingState.orders) ? incomingState.orders : []);
       const mergedState = mergeSharedState(existingState, incomingState);
       await writeSharedStateJson(mergedState);
+      logApiOrderStatus("database value after browser save merge", Array.isArray(mergedState.orders) ? mergedState.orders : []);
+      logApiOrderStatus("API response sent to frontend", Array.isArray(mergedState.orders) ? mergedState.orders : []);
       response.writeHead(200, {
         "Content-Type": "application/json; charset=utf-8",
         "Cache-Control": "no-store",

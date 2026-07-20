@@ -91,6 +91,8 @@ let search = "";
 let statusFilter = "all";
 let deferredInstallPrompt = null;
 let returnToOrderAfterCustomerSave = false;
+let stateSaveTimer = null;
+let stateSyncInFlight = false;
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
@@ -181,8 +183,77 @@ function normalizeState(data) {
   return data;
 }
 
-function saveState() {
+function saveState(options = {}) {
   localStorage.setItem("alliedErpState", JSON.stringify(state));
+  if (!options.localOnly) scheduleServerStateSave();
+}
+
+function orderStatusDebugSnapshot(order = {}) {
+  return {
+    orderId: order.id || "",
+    status: order.status || "",
+    verificationState: order.verification?.state || "",
+    verificationCallStatus: order.verification?.vapiCallStatus || "",
+    displayedFieldName: "verificationStatusKey(order) reads order.status and order.verification.state",
+    displayedVerificationStatus: verificationStatusLabel(verificationStatusKey(order)),
+  };
+}
+
+function logFrontendOrderStatuses(stage, orders = state.orders) {
+  const tracked = (Array.isArray(orders) ? orders : [])
+    .filter((order) => order?.verification?.vapiCallId || order?.status === "verification_in_progress" || order?.status === "verified" || order?.status === "cancelled")
+    .slice(0, 8)
+    .map(orderStatusDebugSnapshot);
+  console.log(`[frontend-state] ${stage}:`, tracked);
+}
+
+function applyServerState(serverState, stage = "server sync") {
+  if (!serverState || !Object.keys(serverState).length) return false;
+  const username = currentUser?.username;
+  state = normalizeState({ ...structuredClone(seedData), ...serverState });
+  currentUser = username ? state.users.find((item) => item.username === username) || null : loadCurrentUser();
+  localStorage.setItem("alliedErpState", JSON.stringify(state));
+  logFrontendOrderStatuses(`frontend value received from ${stage}`);
+  return true;
+}
+
+function scheduleServerStateSave() {
+  window.clearTimeout(stateSaveTimer);
+  stateSaveTimer = window.setTimeout(pushStateToServer, 150);
+}
+
+async function pushStateToServer() {
+  try {
+    const response = await fetch("./api/state", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      cache: "no-store",
+      body: JSON.stringify(state),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.ok) throw new Error(result.error || `State save failed with ${response.status}`);
+    console.log("[frontend-state] API response sent to frontend after save:", result.savedAt || "");
+    if (applyServerState(result.state, "save response")) render();
+  } catch (error) {
+    console.warn("[frontend-state] Server state save failed:", error.message);
+  }
+}
+
+async function syncStateFromServer(options = {}) {
+  if (stateSyncInFlight) return;
+  stateSyncInFlight = true;
+  try {
+    const response = await fetch("./api/state", { cache: "no-store" });
+    const serverState = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(`State load failed with ${response.status}`);
+    console.log("[frontend-state] API response received from /api/state");
+    const changed = applyServerState(serverState, "api/state");
+    if (changed && options.render !== false) render();
+  } catch (error) {
+    console.warn("[frontend-state] Server state sync failed:", error.message);
+  } finally {
+    stateSyncInFlight = false;
+  }
 }
 
 function loadCurrentUser() {
@@ -796,6 +867,7 @@ function verificationStatusLabel(key) {
 function verificationStatusBadge(order) {
   if (!hasAssistantVerification(order)) return "";
   const key = verificationStatusKey(order);
+  console.log("[frontend-state] field name displayed in Sales Order screen:", orderStatusDebugSnapshot(order));
   return `<span class="status verification-status ${key}">Verification: ${verificationStatusLabel(key)}</span>`;
 }
 
@@ -2547,4 +2619,9 @@ function resetDemoData() {
   toast("Demo data reset.");
 }
 
-loadRuntimeFiles().finally(render);
+loadRuntimeFiles()
+  .then(() => syncStateFromServer({ render: false }))
+  .finally(() => {
+    render();
+    window.setInterval(() => syncStateFromServer(), 5000);
+  });
