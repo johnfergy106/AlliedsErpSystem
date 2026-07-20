@@ -2008,7 +2008,7 @@ function openOrderForm(id = null) {
   const firstProduct = visibleProducts()[0] || state.products[0];
   const order = id
     ? state.orders.find((item) => item.id === id)
-    : { id: uid("SO", state.orders), customerId: firstCustomer?.id, rep: isAdmin() ? "" : currentUser.name, date: new Date().toISOString().slice(0, 10), status: "pending", partNumber: "", notes: "", items: [{ productId: firstProduct?.id, qty: 1, price: firstProduct?.price || 0 }] };
+    : { id: uid("SO", state.orders), customerId: firstCustomer?.id, rep: isAdmin() ? "" : currentUser.name, date: new Date().toISOString().slice(0, 10), status: "pending", partNumber: "", purchase_order_number: "", notes: "", items: [{ productId: firstProduct?.id, qty: 1, price: firstProduct?.price || 0 }] };
   openOrderFormFromDraft(order, id);
 }
 
@@ -2038,7 +2038,7 @@ function openOrderFormFromDraft(order, id = null) {
         <div class="field"><label>Customer</label><select id="orderCustomer" onchange="handleOrderCustomerChange()"><option value="__add_new__">＋ Add New Customer</option>${state.customers.map((customer) => `<option value="${customer.id}" ${customer.id === order.customerId ? "selected" : ""}>${html(customer.name)}</option>`).join("")}</select></div>
         <div class="field"><label>Sales Rep</label><input id="orderRep" value="${html(order.rep)}" ${isAdmin() ? "" : "readonly"} required /></div>
         <div class="field"><label>Account Number (Optional)</label><input id="accountNumber" value="${html(order.accountNumber || "")}" /></div>
-        <div class="field"><label>Purchase Order Number (Optional)</label><input id="purchaseOrderNumber" value="${html(purchaseOrderNumber(order))}" maxlength="100" placeholder="Customer PO number" /></div>
+        <div class="field"><label>Purchase Order Number (Optional)</label><input id="purchaseOrderNumber" data-testid="purchase-order-number-input" value="${html(purchaseOrderNumber(order))}" maxlength="100" placeholder="Customer PO number" /></div>
         <div class="field"><label>Ship Date (Optional)</label><input id="shipDate" type="date" value="${html(order.shipDate || "")}" /></div>
         <div class="field">
           <label>Account Type</label>
@@ -2480,6 +2480,7 @@ function openOrderFormForCustomer(customerId) {
     date: new Date().toISOString().slice(0, 10),
     status: "pending",
     partNumber: "",
+    purchase_order_number: "",
     notes: "",
     shipDate: "",
     billTo: "",
