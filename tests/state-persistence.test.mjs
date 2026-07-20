@@ -348,12 +348,18 @@ test("Vapi verified webhook updates order once and ignores duplicates", async ()
   assert.equal(order.verification.callDuration, "135");
   assert.match(order.verification.transcript, /confirmed the order/i);
   assert.equal(order.verificationHistory.length, 1);
+  assert.equal(order.vapiNotes.length, 1);
+  assert.equal(order.vapiNotes[0].verification_outcome, "VERIFIED");
+  assert.equal(order.vapiNotes[0].summary, "Customer verified the sales order.");
+  assert.equal(order.vapi_notes_count, 1);
+  assert.equal(order.has_vapi_changes, undefined);
 
   const duplicate = await postVapiWebhook(event);
   assert.equal(duplicate.duplicate, true);
   state = await getState();
   order = state.orders.find((item) => item.id === "SO-VAPI-VERIFIED");
   assert.equal(order.verificationHistory.length, 1);
+  assert.equal(order.vapiNotes.length, 1);
   assert.equal(order.statusHistory.filter((entry) => entry.status === "verified").length, 1);
 });
 
@@ -391,6 +397,16 @@ test("Vapi webhook reads ERP_Order_Verification structuredOutputs result", async
   assert.equal(order.verification.changeSummary, "Customer requested an updated ship date.");
   assert.equal(order.verification.changesReported, "true");
   assert.equal(order.verificationHistory.at(-1).summary, "Buyer confirmed the order.");
+  assert.equal(order.vapiNotes.length, 1);
+  assert.equal(order.vapiNotes[0].changes_reported, true);
+  assert.equal(order.vapiNotes[0].change_summary, "Customer requested an updated ship date.");
+  assert.equal(order.vapiNotes[0].change_review_status, "Pending Review");
+  assert.equal(order.vapi_notes_count, 1);
+  assert.equal(order.has_vapi_changes, true);
+  assert.equal(order.vapi_change_review_status, "Pending Review");
+  assert.equal(order.vapi_change_summary, "Customer requested an updated ship date.");
+  assert.equal(state.auditLog.some((entry) => entry.action === "Vapi note imported" && entry.order_number === "SO-VAPI-STRUCTURED"), true);
+  assert.equal(state.auditLog.some((entry) => entry.action === "Order flagged for customer change" && entry.order_number === "SO-VAPI-STRUCTURED"), true);
 });
 
 test("Vapi status-update in-progress keeps the order calling without finalizing", async () => {
@@ -458,6 +474,8 @@ test("Vapi end-of-call empty output retries and applies fetched structured outpu
   const { order } = await waitForOrder("SO-VAPI-RETRY", (item) => item.status === "verified", 1200);
   assert.equal(order.verification.state, "verified");
   assert.equal(order.verification.summary, "Fetched output verified the order.");
+  assert.equal(order.vapiNotes.length, 1);
+  assert.equal(order.vapiNotes[0].summary, "Fetched output verified the order.");
 });
 
 test("Vapi retry succeeds when output becomes available on second attempt", async () => {
@@ -484,6 +502,8 @@ test("Vapi retry succeeds when output becomes available on second attempt", asyn
   const { order } = await waitForOrder("SO-VAPI-SECOND-RETRY", (item) => item.status === "cancelled", 1200);
   assert.equal(order.verification.state, "cancelled");
   assert.equal(order.verification.cancellationNotes, "Ordered elsewhere");
+  assert.equal(order.vapiNotes.length, 1);
+  assert.equal(order.vapiNotes[0].cancellation_reason, "Ordered elsewhere");
 });
 
 test("Vapi retry exhaustion changes final verification to needs review", async () => {
@@ -506,6 +526,8 @@ test("Vapi retry exhaustion changes final verification to needs review", async (
   assert.equal(order.status, "verification_in_progress");
   assert.equal(order.verification.summary, "Vapi structured analysis was not available after retry attempts.");
   assert.equal(state.vapiStructuredOutputRetries.find((record) => record.callId === "call_retry_exhaust").status, "exhausted");
+  assert.equal(order.vapiNotes.length, 1);
+  assert.equal(order.vapiNotes[0].verification_outcome, "INCOMPLETE");
 });
 
 test("Vapi retry accepts alternate ERP Order Verification output name", async () => {
@@ -529,6 +551,7 @@ test("Vapi retry accepts alternate ERP Order Verification output name", async ()
 
   const { order } = await waitForOrder("SO-VAPI-ALT-NAME", (item) => item.status === "verified", 1200);
   assert.equal(order.verification.summary, "Alternate name verified.");
+  assert.equal(order.vapiNotes.length, 1);
 });
 
 test("Vapi cancelled webhook cancels the order", async () => {
@@ -551,6 +574,9 @@ test("Vapi cancelled webhook cancels the order", async () => {
   assert.equal(order.verification.cancelledBy, "Customer");
   assert.equal(order.verification.cancellationNotes, "Other");
   assert.equal(order.verificationHistory.at(-1).outcome, "CANCELLED");
+  assert.equal(order.vapiNotes.length, 1);
+  assert.equal(order.vapiNotes[0].verification_outcome, "CANCELLED");
+  assert.equal(order.vapiNotes[0].cancellation_reason, "Other");
 });
 
 test("Vapi callback-requested webhook stores issue verification and callback notes", async () => {
@@ -579,6 +605,8 @@ test("Vapi callback-requested webhook stores issue verification and callback not
   assert.equal(order.verification.outcome, "callback_requested");
   assert.equal(order.verification.callbackNotes, "Call back next week");
   assert.equal(order.verificationHistory.at(-1).summary, "Buyer requested a callback next week.");
+  assert.equal(order.vapiNotes.length, 1);
+  assert.equal(order.vapiNotes[0].callback_notes, "Call back next week");
 });
 
 test("Vapi voicemail and no-answer webhooks do not change order status", async () => {
@@ -607,6 +635,8 @@ test("Vapi voicemail and no-answer webhooks do not change order status", async (
   assert.equal(order.verification.state, "no_answer");
   assert.equal(order.verification.attempts, 1);
   assert.deepEqual(order.verificationHistory.map((entry) => entry.outcome), ["VOICEMAIL", "NO_ANSWER"]);
+  assert.equal(order.vapiNotes.length, 2);
+  assert.deepEqual(order.vapiNotes.map((entry) => entry.verification_outcome).sort(), ["NO_ANSWER", "VOICEMAIL"]);
 });
 
 test("Vapi failed webhook is logged without moving the order status", async () => {

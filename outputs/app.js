@@ -81,10 +81,6 @@ let appConfig = {
   apiBaseUrl: "",
   requireHttps: false,
 };
-let sharedDataAvailable = false;
-let sharedDataSaving = false;
-let sharedDataSaveQueued = false;
-let lastSharedSyncAt = 0;
 let state = loadState();
 let currentUser = loadCurrentUser();
 let view = "dashboard";
@@ -129,64 +125,6 @@ async function loadRuntimeFiles() {
   if (version?.version) appVersion = version.version;
 }
 
-async function loadSharedState({ rerender = false } = {}) {
-  try {
-    const response = await fetch("./api/state", { cache: "no-store" });
-    if (!response.ok) throw new Error(`Shared data returned ${response.status}`);
-    const data = await response.json();
-    sharedDataAvailable = true;
-    if (data && data.orders && data.customers && data.products && data.users) {
-      state = normalizeState({ ...structuredClone(seedData), ...data });
-      localStorage.setItem("alliedErpState", JSON.stringify(state));
-      currentUser = loadCurrentUser();
-      lastSharedSyncAt = Date.now();
-      if (rerender) render();
-      return true;
-    }
-    await saveSharedState();
-    return true;
-  } catch {
-    sharedDataAvailable = false;
-    return false;
-  }
-}
-
-async function saveSharedState() {
-  if (sharedDataSaving) {
-    sharedDataSaveQueued = true;
-    return;
-  }
-  sharedDataSaving = true;
-  try {
-    const response = await fetch("./api/state", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(state),
-    });
-    sharedDataAvailable = response.ok;
-    if (response.ok) {
-      const result = await response.json().catch(() => ({}));
-      if (result.state?.orders && result.state?.customers && result.state?.products && result.state?.users) {
-        state = normalizeState({ ...structuredClone(seedData), ...result.state });
-        localStorage.setItem("alliedErpState", JSON.stringify(state));
-      }
-      lastSharedSyncAt = Date.now();
-    }
-  } catch {
-    sharedDataAvailable = false;
-  } finally {
-    sharedDataSaving = false;
-    if (sharedDataSaveQueued) {
-      sharedDataSaveQueued = false;
-      saveSharedState();
-    }
-  }
-}
-
-function shouldRefreshSharedState() {
-  return Boolean(currentUser) && sharedDataAvailable && !sharedDataSaving && !sharedDataSaveQueued && !document.querySelector(".modal-backdrop.open") && Date.now() - lastSharedSyncAt > 5000;
-}
-
 function loadState() {
   const saved = localStorage.getItem("alliedErpState");
   if (!saved) return normalizeState(structuredClone(seedData));
@@ -194,29 +132,16 @@ function loadState() {
     const parsed = JSON.parse(saved);
     const merged = { ...structuredClone(seedData), ...parsed };
     if (!Array.isArray(merged.users) || !merged.users.length) merged.users = structuredClone(seedData.users);
+    seedData.users.forEach((seedUser) => {
+      if (!merged.users.some((user) => user.username === seedUser.username)) merged.users.push({ ...seedUser });
+    });
     return normalizeState(merged);
   } catch {
     return normalizeState(structuredClone(seedData));
   }
 }
 
-function ensureStarterUsers(data) {
-  if (!Array.isArray(data.users)) data.users = [];
-  seedData.users.forEach((seedUser) => {
-    const user = data.users.find((item) => item.username === seedUser.username);
-    if (!user) {
-      data.users.push({ ...seedUser });
-      return;
-    }
-    user.role = seedUser.username === "admin" ? "super_admin" : user.role || seedUser.role;
-    user.name = user.name || seedUser.name;
-    if (!user.password && seedUser.password) user.password = seedUser.password;
-  });
-  return data;
-}
-
 function normalizeState(data) {
-  ensureStarterUsers(data);
   data.settings = data.settings || {};
   delete data.settings.vapiApiKey;
   data.deletedCustomers = Array.isArray(data.deletedCustomers) ? data.deletedCustomers : [];
@@ -238,6 +163,16 @@ function normalizeState(data) {
       statusChangedBy: by,
       statusHistory: Array.isArray(order.statusHistory) && order.statusHistory.length ? order.statusHistory : [{ status, label: statusLabel(status), at, by, notes: order.verification?.summary || "" }],
       verificationHistory: Array.isArray(order.verificationHistory) ? order.verificationHistory : [],
+      vapiNotes: Array.isArray(order.vapiNotes) ? order.vapiNotes : [],
+      vapi_notes_count: Array.isArray(order.vapiNotes) ? order.vapiNotes.length : Number(order.vapi_notes_count || 0),
+      has_vapi_changes: Boolean(order.has_vapi_changes),
+      vapi_change_review_status: order.vapi_change_review_status || "",
+      vapi_change_summary: order.vapi_change_summary || "",
+      vapi_change_detected_at: order.vapi_change_detected_at || "",
+      vapi_change_call_id: order.vapi_change_call_id || "",
+      vapi_change_reviewed_by: order.vapi_change_reviewed_by || "",
+      vapi_change_reviewed_at: order.vapi_change_reviewed_at || "",
+      vapi_change_review_note: order.vapi_change_review_note || "",
       processedVapiCallIds: Array.isArray(order.processedVapiCallIds) ? order.processedVapiCallIds : [],
       creditHoldNotes: order.creditHoldNotes || order.verification?.creditHoldNotes || "",
       hiddenFor: Array.isArray(order.hiddenFor) ? order.hiddenFor : [],
@@ -246,15 +181,8 @@ function normalizeState(data) {
   return data;
 }
 
-function rememberDeleted(type, id) {
-  const key = `deleted${type}`;
-  if (!Array.isArray(state[key])) state[key] = [];
-  if (id && !state[key].includes(id)) state[key].push(id);
-}
-
 function saveState() {
   localStorage.setItem("alliedErpState", JSON.stringify(state));
-  saveSharedState();
 }
 
 function loadCurrentUser() {
@@ -546,63 +474,17 @@ function renderLogin() {
         </form>
         <div class="login-help">
           <span>Ask admin for forgot password</span>
-          <button class="link-button" type="button" onclick="resetLoginCache()">Reset login cache</button>
         </div>
       </section>
     </main>
   `;
 }
 
-function resetLoginCache() {
-  currentUser = null;
-  state = normalizeState(structuredClone(seedData));
-  localStorage.removeItem("alliedErpUser");
-  localStorage.setItem("alliedErpState", JSON.stringify(state));
-  sessionStorage.setItem("alliedErpSkipSharedStateOnce", "1");
-  renderLogin();
-  toast("Login cache reset. Try signing in again.");
-}
-
-async function serverLogin(username, password) {
-  try {
-    const response = await fetch("./api/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, password }),
-    });
-    if (!response.ok) return null;
-    const data = await response.json();
-    return data.user || null;
-  } catch {
-    return null;
-  }
-}
-
-function rememberServerUser(user) {
-  if (!user?.username) return null;
-  const existing = state.users.find((item) => item.username === user.username);
-  const merged = {
-    ...(existing || {}),
-    ...user,
-    password: existing?.password || "",
-  };
-  if (!merged.name) merged.name = user.username;
-  if (!merged.role) merged.role = "sales";
-  if (existing) Object.assign(existing, merged);
-  else state.users.push(merged);
-  localStorage.setItem("alliedErpState", JSON.stringify(state));
-  return merged;
-}
-
-async function login(event) {
+function login(event) {
   event.preventDefault();
   const username = document.querySelector("#loginUsername").value.trim().toLowerCase();
-  const password = document.querySelector("#loginPassword").value.trim();
-  const submitButton = event.submitter;
-  if (submitButton) submitButton.disabled = true;
-  const serverUser = await serverLogin(username, password);
-  const user = rememberServerUser(serverUser) || state.users.find((item) => item.username === username && item.password && item.password === password);
-  if (submitButton) submitButton.disabled = false;
+  const password = document.querySelector("#loginPassword").value;
+  const user = state.users.find((item) => item.username === username && item.password === password);
   if (!user) {
     toast("Login failed. Check the username and password.");
     return;
@@ -842,7 +724,9 @@ function ordersTable(orders, actions = false, options = {}) {
         .map((order) => {
           const customer = customerById(order.customerId);
           const adminFollowUpNotes = isAdmin() && !actions && order.followUp?.notes ? `<div class="metric-note">Follow Up: ${html(order.followUp.notes)}</div>` : "";
-          const customerCell = `${html(customer?.name || "Unknown customer")}${adminFollowUpNotes}`;
+          const customerCell = `${html(customer?.name || "Unknown customer")}${vapiChangeBadge(order)}${adminFollowUpNotes}`;
+          const vapiNoteCount = vapiNotesForOrder(order).length || Number(order.vapi_notes_count || 0);
+          const notesWarn = pendingVapiChange(order) ? " warn" : "";
           return `<tr>
             ${actions ? `<td><input class="order-select" type="checkbox" value="${html(order.id)}" /></td>` : ""}
             <td><strong>${html(displayOrderNumber(order))}</strong><div class="metric-note">${orderPartLabel(order)}${order.notes ? ` ${html(order.notes)}` : ""}</div></td>
@@ -853,6 +737,7 @@ function ordersTable(orders, actions = false, options = {}) {
             <td>${statusCell(order, { showVerificationBadge })}</td>
             ${actions ? `<td><div class="row-actions">
               <button class="icon-btn" title="Edit order" onclick="openOrderForm('${order.id}')">✎</button>
+              <button class="btn mini-btn${notesWarn}" type="button" onclick="openVapiNotes('${order.id}')" aria-label="Open Vapi notes for ${html(displayOrderNumber(order))}">Vapi Notes (${vapiNoteCount})</button>
               <button class="icon-btn chat-icon" title="Order chat" onclick="openOrderChat('${order.id}')">💬${order.messages?.length ? `<span class="badge">${order.messages.length}</span>` : ""}</button>
               <button class="icon-btn" title="Verify order" onclick="openVerificationOptions('${order.id}')">▶</button>
               <button class="icon-btn danger-icon" title="Delete order" onclick="deleteOrder('${order.id}')">×</button>
@@ -914,6 +799,37 @@ function verificationStatusBadge(order) {
   return `<span class="status verification-status ${key}">Verification: ${verificationStatusLabel(key)}</span>`;
 }
 
+function pendingVapiChange(order) {
+  return Boolean(order?.has_vapi_changes && (order.vapi_change_review_status || "Pending Review") === "Pending Review");
+}
+
+function vapiChangeBadge(order) {
+  if (!pendingVapiChange(order)) return "";
+  return `<div class="change-flag" role="status" aria-label="Customer change reported during Vapi verification">⚠ Customer Change Reported</div>`;
+}
+
+function vapiNotesForOrder(order) {
+  return (Array.isArray(order?.vapiNotes) ? order.vapiNotes : []).slice().sort((a, b) => Date.parse(b.created_at || b.call_ended_at || "") - Date.parse(a.created_at || a.call_ended_at || ""));
+}
+
+function vapiChangeAlert(order) {
+  if (!order?.has_vapi_changes) return "";
+  const pending = pendingVapiChange(order);
+  return `<div class="change-alert ${pending ? "pending" : ""}" role="alert">
+    <strong>Customer information changes were reported during the Vapi verification call.</strong>
+    <div class="note-grid">
+      <div><span>Change Summary</span><p>${html(order.vapi_change_summary || "No summary was provided.")}</p></div>
+      <div><span>Call Date</span><p>${html(order.vapi_change_detected_at || "Not available")}</p></div>
+      <div><span>Call ID</span><p>${html(order.vapi_change_call_id || "Not available")}</p></div>
+      <div><span>Review Status</span><p>${html(order.vapi_change_review_status || "Pending Review")}</p></div>
+    </div>
+    <div class="inline-actions">
+      <button class="btn mini-btn" type="button" onclick="openVapiNotes('${order.id}')">Review Changes</button>
+      ${pending ? `<button class="btn mini-btn primary" type="button" onclick="setVapiChangeReviewStatus('${order.id}', 'Reviewed')">Mark Reviewed</button>` : ""}
+    </div>
+  </div>`;
+}
+
 function kickbackLabel(order) {
   const status = order.verification?.kickbackStatus || order.kickbackStatus || "None";
   if (!status || status === "None") return "";
@@ -944,6 +860,7 @@ function statusCell(order, options = {}) {
     <div class="status-cell">
       ${replaceInProgressStatus ? "" : statusBadge(order.status)}
       ${showVerificationBadge ? verificationStatusBadge(order) : ""}
+      ${pendingVapiChange(order) ? `<div class="metric-note warning-note" aria-label="Customer change review pending">⚠ Customer change review pending</div>` : ""}
       ${statusChangedLabel(order)}
       ${order.status === "verified" && order.verification?.verifiedBy ? `<div class="metric-note">Verified by ${html(order.verification.verifiedBy)}</div>` : ""}
       ${order.creditHoldNotes ? `<div class="metric-note">Credit Hold: ${html(order.creditHoldNotes)}</div>` : ""}
@@ -959,7 +876,6 @@ function statusOptionsForOrder(order) {
   if (isAdmin()) return [
     ["pending", "Pending"],
     ["pending_ap", "Pending AP"],
-    ["verification_in_progress", "Verification In Progress"],
     ["verified", "Verified"],
     ["issue", "Issue"],
     ["credit_hold", "Credit Hold"],
@@ -1062,7 +978,7 @@ function changeOrderStatus(orderId, status) {
   }
   if (["sent_to_shipping", "partial_ship", "order_shipped", "completed"].includes(status)) order.creditHoldNotes = "";
   recordStatusChange(order, status, notes);
-  if (["verified", "verification_in_progress", "pending_ap", "issue", "cancelled", "credit_hold", "kickback_pending", "partial_ship", "sent_to_shipping", "order_shipped", "completed"].includes(status)) {
+  if (["verified", "pending_ap", "issue", "cancelled", "credit_hold", "kickback_pending", "partial_ship", "sent_to_shipping", "order_shipped", "completed"].includes(status)) {
     order.verification = {
       ...(order.verification || {}),
       state: status,
@@ -1092,6 +1008,104 @@ function saveDashboardKickbackStatus(orderId, status) {
 
 function canAccessOrder(order) {
   return !!order && (isAdmin() || (isCredit() && visibleOrders().some((item) => item.id === order.id)) || (isShipping() && visibleOrders().some((item) => item.id === order.id)) || order.rep === currentUser?.name);
+}
+
+function openVapiNotes(orderId) {
+  const order = state.orders.find((item) => item.id === orderId);
+  if (!canAccessOrder(order)) return toast("You can only view notes for orders you can access.");
+  const notes = vapiNotesForOrder(order);
+  const customer = customerById(order.customerId);
+  openModal(`
+    <div class="modal-head"><h2>Vapi Notes · ${html(displayOrderNumber(order))}</h2><button class="icon-btn" title="Close" onclick="closeModal()">×</button></div>
+    <div class="panel-body">
+      <div class="chat-context">
+        <strong>${html(customer?.name || "Unknown customer")}</strong>
+        <span>Source: Vapi Verification Call · ${notes.length} ${notes.length === 1 ? "note" : "notes"}</span>
+      </div>
+      ${vapiChangeAlert(order)}
+      <div class="vapi-notes-list">
+        ${notes.length ? notes.map((note) => vapiNoteCard(order, note)).join("") : `<div class="empty">No Vapi call notes have been saved for this order yet.</div>`}
+      </div>
+    </div>
+  `);
+}
+
+function vapiNoteCard(order, note) {
+  const outcome = String(note.verification_outcome || "UNKNOWN").toLowerCase();
+  const date = note.call_ended_at || note.created_at || "";
+  const pending = note.change_review_status === "Pending Review";
+  return `<article class="vapi-note-card ${pending ? "pending" : ""}">
+    <div class="vapi-note-head">
+      <div>
+        <span class="status verification-status ${outcome}">${html(verificationStatusLabel(outcome))}</span>
+        <strong>${html(date || "No call date")}</strong>
+      </div>
+      <button class="btn mini-btn" type="button" onclick="copyVapiNote('${order.id}', '${html(note.id)}')">Copy Notes</button>
+    </div>
+    <div class="note-grid">
+      <div><span>Summary</span><p>${html(note.summary || "No summary was provided.")}</p></div>
+      ${note.cancellation_reason ? `<div><span>Cancellation Reason</span><p>${html(note.cancellation_reason)}</p></div>` : ""}
+      ${note.callback_notes ? `<div><span>Callback Notes</span><p>${html(note.callback_notes)}</p></div>` : ""}
+      ${note.change_summary ? `<div><span>Change Summary</span><p>${html(note.change_summary)}</p></div>` : ""}
+      <div><span>Review Status</span><p>${html(note.change_review_status || "No changes reported")}</p></div>
+      <div><span>Call Duration</span><p>${html(note.call_duration || "Not available")}</p></div>
+      <div><span>Phone Number</span><p>${html(note.phone_number || "Not available")}</p></div>
+      <div><span>Call ID</span><p>${html(note.vapi_call_id || "Not available")}</p></div>
+    </div>
+    <div class="inline-actions">
+      ${pending ? `<button class="btn mini-btn primary" type="button" onclick="setVapiChangeReviewStatus('${order.id}', 'Reviewed')">Mark Reviewed</button><button class="btn mini-btn" type="button" onclick="setVapiChangeReviewStatus('${order.id}', 'Accepted')">Accept</button><button class="btn mini-btn" type="button" onclick="setVapiChangeReviewStatus('${order.id}', 'Rejected')">Reject</button>` : ""}
+    </div>
+    <details class="transcript-toggle">
+      <summary>Show Transcript</summary>
+      <pre>${html(note.transcript || "No transcript was saved for this call.")}</pre>
+    </details>
+  </article>`;
+}
+
+function copyVapiNote(orderId, noteId) {
+  const order = state.orders.find((item) => item.id === orderId);
+  const note = vapiNotesForOrder(order).find((item) => item.id === noteId);
+  if (!note) return toast("Vapi note was not found.");
+  const text = [
+    `Order: ${displayOrderNumber(order)}`,
+    `Outcome: ${note.verification_outcome || ""}`,
+    `Summary: ${note.summary || ""}`,
+    note.cancellation_reason ? `Cancellation reason: ${note.cancellation_reason}` : "",
+    note.callback_notes ? `Callback notes: ${note.callback_notes}` : "",
+    note.change_summary ? `Change summary: ${note.change_summary}` : "",
+    `Review status: ${note.change_review_status || ""}`,
+    `Call ID: ${note.vapi_call_id || ""}`,
+  ].filter(Boolean).join("\n");
+  navigator.clipboard?.writeText(text).then(() => toast("Vapi notes copied."), () => toast(text));
+}
+
+function setVapiChangeReviewStatus(orderId, status) {
+  const order = state.orders.find((item) => item.id === orderId);
+  if (!canAccessOrder(order)) return toast("You can only review changes for orders you can access.");
+  const note = window.prompt("Optional review note:") || "";
+  const previous = order.vapi_change_review_status || "Pending Review";
+  order.vapi_change_review_status = status;
+  order.vapi_change_reviewed_by = currentUser?.name || "";
+  order.vapi_change_reviewed_at = timestamp();
+  order.vapi_change_review_note = note.trim();
+  if (Array.isArray(order.vapiNotes)) {
+    order.vapiNotes = order.vapiNotes.map((item) => item.change_review_status === "Pending Review" ? { ...item, change_review_status: status, reviewed_by: order.vapi_change_reviewed_by, reviewed_at: order.vapi_change_reviewed_at, review_note: order.vapi_change_review_note } : item);
+  }
+  if (!Array.isArray(order.auditLog)) order.auditLog = [];
+  order.auditLog.push({
+    action: status === "Reviewed" ? "Change reviewed" : `Change ${status.toLowerCase()}`,
+    order_number: order.id,
+    vapi_call_id: order.vapi_change_call_id || "",
+    employee: currentUser?.name || "",
+    timestamp: new Date().toISOString(),
+    previous_status: previous,
+    new_status: status,
+    note: order.vapi_change_review_note,
+  });
+  saveState();
+  render();
+  openVapiNotes(orderId);
+  toast(`Vapi change marked ${status}.`);
 }
 
 function openOrderChat(orderId) {
@@ -1844,7 +1858,6 @@ function deleteUser(username) {
   if (!user || user.role === "super_admin") return toast("Super Admin users cannot be deleted in this MVP.");
   const hasOrders = state.orders.some((order) => order.rep === user.name);
   if (hasOrders && !confirm(`${user.name} has sales orders. Delete this login anyway? Orders will remain assigned to that rep name.`)) return;
-  rememberDeleted("Users", username);
   state.users = state.users.filter((item) => item.username !== username);
   saveState();
   closeModal();
@@ -1880,6 +1893,7 @@ function openOrderFormFromDraft(order, id = null) {
   openModal(`
     <div class="modal-head"><h2>${id ? "Edit" : "New"} Sales Order</h2><button class="icon-btn" title="Close" onclick="closeModal()">×</button></div>
     <form onsubmit="saveOrder(event)">
+      ${vapiChangeAlert(order)}
       <div class="panel-body form-grid">
         <input id="orderId" type="hidden" value="${html(order.id)}" />
         <input id="orderPartNumber" type="hidden" value="${html(order.partNumber || "")}" />
@@ -1918,7 +1932,6 @@ function openOrderFormFromDraft(order, id = null) {
           <label>Line Items</label>
           <div class="line-items" id="lineItems">${order.items.map(lineItemHtml).join("")}</div>
           <button class="btn" type="button" onclick="addLineItem()">＋ Add Item</button>
-          <button class="btn" type="button" onclick="addProductFromOrder()">＋ Add New Product</button>
         </div>
         <div class="field">
           <label>Promo Ticket (Optional)</label>
@@ -1974,30 +1987,6 @@ function syncLinePrice(select) {
 function addLineItem() {
   const product = visibleProducts()[0] || state.products[0];
   document.querySelector("#lineItems").insertAdjacentHTML("beforeend", lineItemHtml({ productId: product?.id, qty: 1, price: product?.price || 0 }));
-}
-
-function addProductFromOrder() {
-  const sku = prompt("Enter product SKU:");
-  if (!sku || !sku.trim()) return;
-  const name = prompt("Enter product name:");
-  if (!name || !name.trim()) return;
-  const category = prompt("Enter product category:", "Custom");
-  const priceText = prompt("Enter unit price:", "0.00");
-  const price = Number(priceText || 0);
-  if (Number.isNaN(price) || price < 0) return toast("Unit price must be a valid number.");
-  const product = {
-    id: uid("P", state.products),
-    sku: sku.trim(),
-    name: name.trim(),
-    category: (category || "Custom").trim(),
-    price,
-    stock: 0,
-    owner: currentUser?.username || currentUser?.name || "shared",
-  };
-  state.products.unshift(product);
-  saveState();
-  document.querySelector("#lineItems").insertAdjacentHTML("beforeend", lineItemHtml({ productId: product.id, qty: 1, price: product.price }));
-  toast(`${product.sku} added to your product catalog and this order.`);
 }
 
 function handleOrderCustomerChange() {
@@ -2094,6 +2083,18 @@ function saveOrder(event) {
     notes: document.querySelector("#orderNotes").value.trim(),
     items,
     verification: existingOrder?.verification || null,
+    verificationHistory: existingOrder?.verificationHistory || [],
+    vapiNotes: existingOrder?.vapiNotes || [],
+    vapi_notes_count: existingOrder?.vapi_notes_count || 0,
+    has_vapi_changes: existingOrder?.has_vapi_changes || false,
+    vapi_change_review_status: existingOrder?.vapi_change_review_status || "",
+    vapi_change_summary: existingOrder?.vapi_change_summary || "",
+    vapi_change_detected_at: existingOrder?.vapi_change_detected_at || "",
+    vapi_change_call_id: existingOrder?.vapi_change_call_id || "",
+    vapi_change_reviewed_by: existingOrder?.vapi_change_reviewed_by || "",
+    vapi_change_reviewed_at: existingOrder?.vapi_change_reviewed_at || "",
+    vapi_change_review_note: existingOrder?.vapi_change_review_note || "",
+    auditLog: existingOrder?.auditLog || [],
     kickbackStatus: existingOrder?.kickbackStatus || existingOrder?.verification?.kickbackStatus || "None",
     kickbackNotes: existingOrder?.kickbackNotes || existingOrder?.verification?.kickbackNotes || "",
     creditHoldNotes: existingOrder?.creditHoldNotes || existingOrder?.verification?.creditHoldNotes || "",
@@ -2253,7 +2254,6 @@ function deleteProduct(productId) {
     ? `${product.sku} is used on ${orderCount} order${orderCount === 1 ? "" : "s"}. Delete it from the product catalog anyway? Existing orders will keep the line but show a missing product name.`
     : `Delete product ${product.sku}? This cannot be undone.`;
   if (!confirm(message)) return;
-  rememberDeleted("Products", productId);
   state.products = state.products.filter((item) => item.id !== productId);
   saveState();
   render();
@@ -2360,7 +2360,6 @@ function deleteCustomer(customerId) {
   const orderCount = state.orders.filter((order) => order.customerId === customerId).length;
   if (orderCount && !confirm(`${customer.name} is linked to ${orderCount} sales order${orderCount === 1 ? "" : "s"}. Delete the customer anyway? Existing orders will show Unknown customer.`)) return;
   if (!orderCount && !confirm(`Delete customer ${customer.name}? This cannot be undone.`)) return;
-  rememberDeleted("Customers", customerId);
   state.customers = state.customers.filter((item) => item.id !== customerId);
   saveState();
   render();
@@ -2373,7 +2372,6 @@ function deleteSelectedCustomers() {
   const allowed = ids.filter((id) => canAccessCustomer(id));
   if (!allowed.length) return toast("No selected customers can be deleted.");
   if (!confirm(`Delete ${allowed.length} selected customer${allowed.length === 1 ? "" : "s"}? This cannot be undone.`)) return;
-  allowed.forEach((id) => rememberDeleted("Customers", id));
   state.customers = state.customers.filter((customer) => !allowed.includes(customer.id));
   saveState();
   render();
@@ -2549,18 +2547,4 @@ function resetDemoData() {
   toast("Demo data reset.");
 }
 
-async function startApp() {
-  await loadRuntimeFiles();
-  const skipSharedStateOnce = sessionStorage.getItem("alliedErpSkipSharedStateOnce") === "1";
-  if (skipSharedStateOnce) {
-    sessionStorage.removeItem("alliedErpSkipSharedStateOnce");
-  } else {
-    await loadSharedState();
-  }
-  render();
-  window.setInterval(() => {
-    if (shouldRefreshSharedState()) loadSharedState({ rerender: true });
-  }, 5000);
-}
-
-startApp();
+loadRuntimeFiles().finally(render);

@@ -155,6 +155,33 @@ function mergeVerificationHistory(...orders) {
   return [...history.values()];
 }
 
+function mergeVapiNotes(...orders) {
+  const notes = new Map();
+  orders.flatMap((order) => (Array.isArray(order?.vapiNotes) ? order.vapiNotes : [])).forEach((note, index) => {
+    const key = note.vapi_call_id || note.id || [note.order_number, note.created_at, index].map((value) => value || "").join("|");
+    notes.set(key, note);
+  });
+  return [...notes.values()].sort((a, b) => Date.parse(b.created_at || "") - Date.parse(a.created_at || ""));
+}
+
+function mergeAuditEntries(...orders) {
+  const entries = new Map();
+  orders.flatMap((order) => (Array.isArray(order?.auditLog) ? order.auditLog : [])).forEach((entry, index) => {
+    const key = [entry.action, entry.timestamp, entry.employee, entry.vapi_call_id, index].map((value) => value || "").join("|");
+    entries.set(key, entry);
+  });
+  return [...entries.values()].sort((a, b) => Date.parse(b.timestamp || "") - Date.parse(a.timestamp || ""));
+}
+
+function mergeStateAuditLogs(...states) {
+  const entries = new Map();
+  states.flatMap((state) => (Array.isArray(state?.auditLog) ? state.auditLog : [])).forEach((entry, index) => {
+    const key = [entry.action, entry.timestamp, entry.employee, entry.order_number, entry.vapi_call_id, index].map((value) => value || "").join("|");
+    entries.set(key, entry);
+  });
+  return [...entries.values()].sort((a, b) => Date.parse(b.timestamp || "") - Date.parse(a.timestamp || ""));
+}
+
 function betterOrder(existing = {}, incoming = {}) {
   const existingTime = statusTime(existing);
   const incomingTime = statusTime(incoming);
@@ -166,12 +193,16 @@ function betterOrder(existing = {}, incoming = {}) {
 function mergeOrderRecord(existing = {}, incoming = {}) {
   const winner = betterOrder(existing, incoming);
   const loser = winner === incoming ? existing : incoming;
+  const vapiNotes = mergeVapiNotes(loser, winner);
   return {
     ...loser,
     ...winner,
     messages: mergeByKey(loser.messages, winner.messages, "id"),
     statusHistory: mergeStatusHistory(loser, winner),
     verificationHistory: mergeVerificationHistory(loser, winner),
+    vapiNotes,
+    vapi_notes_count: vapiNotes.length,
+    auditLog: mergeAuditEntries(loser, winner),
     processedVapiCallIds: uniqueList(loser.processedVapiCallIds, winner.processedVapiCallIds),
     hiddenFor: uniqueList(loser.hiddenFor, winner.hiddenFor),
   };
@@ -195,6 +226,7 @@ function mergeSharedState(existing = {}, incoming = {}) {
   const deletedUsers = uniqueList(existing.deletedUsers, incoming.deletedUsers);
   const processedVapiCallIds = uniqueList(existing.processedVapiCallIds, incoming.processedVapiCallIds);
   const vapiStructuredOutputRetries = mergeByKey(existing.vapiStructuredOutputRetries, incoming.vapiStructuredOutputRetries, "callId");
+  const auditLog = mergeStateAuditLogs(existing, incoming);
   const merged = {
     ...existing,
     ...incoming,
@@ -205,6 +237,7 @@ function mergeSharedState(existing = {}, incoming = {}) {
     deletedUsers,
     processedVapiCallIds,
     vapiStructuredOutputRetries,
+    auditLog,
   };
   merged.orders = mergeOrders(existing.orders, incoming.orders);
   merged.customers = mergeByKey(existing.customers, incoming.customers, "id", deletedCustomers);
@@ -633,7 +666,104 @@ function outcomeSummary(outcome, transcript = "", analysis = {}) {
   return "Verification outcome could not be determined.";
 }
 
-function updateOrderFromVapiOutcome(order, outcome, details) {
+function structuredBoolean(analysis, ...keys) {
+  const value = structuredText(analysis, ...keys).toLowerCase();
+  return value === "true" || value === "yes" || value === "1";
+}
+
+function meaningfulChangeSummary(summary = "") {
+  const clean = String(summary || "").trim();
+  if (!clean) return "";
+  if (clean.toLowerCase() === "no customer information changes reported.") return "";
+  return clean;
+}
+
+function ensureAuditLog(sharedState) {
+  if (!Array.isArray(sharedState.auditLog)) sharedState.auditLog = [];
+  return sharedState.auditLog;
+}
+
+function addAuditEntry(sharedState, entry) {
+  ensureAuditLog(sharedState).push({
+    timestamp: new Date().toISOString(),
+    employee: entry.employee || "Vapi",
+    ...entry,
+  });
+}
+
+function upsertVapiOrderNote(sharedState, order, details) {
+  const { callId, outcome, transcript, duration, phoneNumber, assistantName, timestamp, endReason, analysis = {}, sourceMessage = {} } = details;
+  if (!Array.isArray(order.vapiNotes)) order.vapiNotes = [];
+  const existing = order.vapiNotes.find((note) => note.vapi_call_id === callId);
+  const now = new Date().toISOString();
+  const startedAt = extractVapiCall(sourceMessage).startedAt || sourceMessage?.startedAt || "";
+  const endedAt = extractVapiCall(sourceMessage).endedAt || timestamp || now;
+  const changesReported = structuredBoolean(analysis, "changes_reported", "changesReported");
+  const changeSummary = structuredText(analysis, "change_summary", "changeSummary");
+  const note = {
+    id: existing?.id || `VN-${callId || Date.now()}`,
+    sales_order_id: order.id,
+    order_number: order.id,
+    vapi_call_id: callId || "",
+    created_at: existing?.created_at || now,
+    updated_at: now,
+    call_started_at: startedAt,
+    call_ended_at: endedAt,
+    call_duration: duration || "",
+    call_cost: extractVapiCall(sourceMessage).cost || sourceMessage?.cost || "",
+    phone_number: phoneNumber ? maskPhoneNumber(phoneNumber) : "",
+    verification_outcome: outcome,
+    summary: outcomeSummary(outcome, transcript, analysis),
+    cancellation_reason: conciseCancellationReason(transcript, analysis),
+    callback_notes: outcome === "CALLBACK_REQUESTED" ? conciseCallbackNotes(transcript, analysis) : structuredText(analysis, "callback_notes", "callbackNotes"),
+    changes_reported: changesReported,
+    change_summary: changeSummary,
+    change_review_status: existing?.change_review_status || (changesReported || meaningfulChangeSummary(changeSummary) ? "Pending Review" : ""),
+    transcript: transcript || "",
+    ended_reason: endReason || "",
+    assistant_name: assistantName || "",
+    structured_output_raw: analysis,
+    source: "Vapi",
+    created_by: "Vapi",
+  };
+  if (existing) {
+    Object.assign(existing, note);
+    console.log(`[vapi-notes] Vapi note updated after retry order=${order.id} call=${callId}`);
+    return existing;
+  }
+  order.vapiNotes.push(note);
+  order.vapiNotes.sort((a, b) => Date.parse(b.created_at || "") - Date.parse(a.created_at || ""));
+  addAuditEntry(sharedState, { action: "Vapi note imported", order_number: order.id, vapi_call_id: callId, new_status: outcome });
+  console.log(`[vapi-notes] Vapi note created order=${order.id} call=${callId}`);
+  return note;
+}
+
+function updateVapiNotesCount(order) {
+  order.vapi_notes_count = Array.isArray(order.vapiNotes) ? order.vapiNotes.length : 0;
+  console.log(`[vapi-notes] Notes count updated order=${order.id} count=${order.vapi_notes_count}`);
+}
+
+function applyVapiChangeFlag(sharedState, order, note, callId) {
+  const shouldFlag = note?.changes_reported === true || Boolean(meaningfulChangeSummary(note?.change_summary));
+  if (!shouldFlag) return;
+  const previous = order.vapi_change_review_status || "";
+  order.has_vapi_changes = true;
+  order.vapi_change_review_status = order.vapi_change_review_status && order.vapi_change_review_status !== "Reviewed" ? order.vapi_change_review_status : "Pending Review";
+  order.vapi_change_summary = note.change_summary || "";
+  order.vapi_change_detected_at = new Date().toISOString();
+  order.vapi_change_call_id = callId || "";
+  if (note) note.change_review_status = order.vapi_change_review_status;
+  addAuditEntry(sharedState, {
+    action: "Order flagged for customer change",
+    order_number: order.id,
+    vapi_call_id: callId,
+    previous_status: previous,
+    new_status: order.vapi_change_review_status,
+  });
+  console.warn(`[vapi-change] Order change flag applied order=${order.id} call=${callId}`);
+}
+
+function updateOrderFromVapiOutcome(order, outcome, details, sharedState = null) {
   const { callId, transcript, duration, phoneNumber, assistantName, timestamp, endReason, analysis } = details;
   const history = verificationHistoryRecord({ outcome, callId, transcript, duration, phoneNumber, assistantName, timestamp });
   history.summary = outcomeSummary(outcome, transcript, analysis);
@@ -704,6 +834,11 @@ function updateOrderFromVapiOutcome(order, outcome, details) {
 
   order.verification = verification;
   appendVerificationHistory(order, history);
+  if (sharedState) {
+    const note = upsertVapiOrderNote(sharedState, order, { ...details, outcome });
+    applyVapiChangeFlag(sharedState, order, note, callId);
+    updateVapiNotesCount(order);
+  }
   return history;
 }
 
@@ -787,7 +922,8 @@ function applyStructuredOutputToOrder(sharedState, order, context, structuredRes
     timestamp: context.timestamp || new Date().toISOString(),
     endReason: context.endReason || extractVapiEndReason(sourceMessage),
     analysis: structuredResult,
-  });
+    sourceMessage,
+  }, sharedState);
   if (outcome === "VERIFIED") {
     const recordingUrl = extractRecordingUrl(sourceMessage);
     if (recordingUrl) order.verification.recordingUrl = recordingUrl;
@@ -833,7 +969,7 @@ function markRetryExhausted(sharedState, order, record, note = "Vapi structured 
     timestamp: record.timestamp || new Date().toISOString(),
     endReason: record.endReason || "",
     analysis: { summary: note },
-  });
+  }, sharedState);
   order.verification.summary = note;
   markProcessedCall(sharedState, order, record.callId);
   logVapiWebhookActivity(sharedState, {
@@ -1367,7 +1503,8 @@ const server = createServer(async (request, response) => {
           timestamp,
           endReason,
           analysis: structuredResult,
-        });
+          sourceMessage: message,
+        }, sharedState);
         logVapiWebhookActivity(sharedState, {
           stage: "status updated",
           callId,
@@ -1395,7 +1532,8 @@ const server = createServer(async (request, response) => {
         timestamp,
         endReason,
         analysis: structuredResult,
-      });
+        sourceMessage: message,
+      }, sharedState);
 
       if (outcome === "VERIFIED") {
         const recordingUrl = extractRecordingUrl(message);
