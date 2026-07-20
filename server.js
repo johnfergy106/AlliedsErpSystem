@@ -28,6 +28,13 @@ const envPasswordKeys = {
   avery: "ALLIED_ERP_AVERY_PASSWORD",
 };
 const vapiApiUrl = process.env.VAPI_API_URL || "https://api.vapi.ai/call";
+const vapiRetryDelaysMs = (process.env.VAPI_STRUCTURED_OUTPUT_RETRY_DELAYS_MS || "3000,6000,12000,25000")
+  .split(",")
+  .map((value) => Number(value.trim()))
+  .filter((value) => Number.isFinite(value) && value >= 0);
+const retryWorkerIntervalMs = Number(process.env.VAPI_RETRY_WORKER_INTERVAL_MS || 5000);
+let retryWorkerRunning = false;
+let sharedStateWriteQueue = Promise.resolve();
 
 const contentTypes = {
   ".html": "text/html; charset=utf-8",
@@ -59,10 +66,10 @@ async function readSharedStateJson() {
   }
 }
 
-async function writeSharedStateJson(state) {
+async function writeSharedStateJsonNow(state) {
   await mkdir(dataRoot, { recursive: true });
   const body = JSON.stringify(state, null, 2);
-  const temporaryPath = `${sharedStatePath}.tmp`;
+  const temporaryPath = `${sharedStatePath}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`;
   if (existsSync(sharedStatePath)) {
     await mkdir(backupRoot, { recursive: true });
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
@@ -70,7 +77,22 @@ async function writeSharedStateJson(state) {
     await copyFile(sharedStatePath, path.join(backupRoot, "shared-state-latest.json")).catch(() => {});
   }
   await writeFile(temporaryPath, body, "utf8");
-  await rename(temporaryPath, sharedStatePath);
+  let lastError;
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      await rename(temporaryPath, sharedStatePath);
+      return;
+    } catch (error) {
+      lastError = error;
+      await new Promise((resolve) => setTimeout(resolve, 25 * (attempt + 1)));
+    }
+  }
+  throw lastError;
+}
+
+async function writeSharedStateJson(state) {
+  sharedStateWriteQueue = sharedStateWriteQueue.catch(() => {}).then(() => writeSharedStateJsonNow(state));
+  return sharedStateWriteQueue;
 }
 
 function uniqueList(...lists) {
@@ -172,6 +194,7 @@ function mergeSharedState(existing = {}, incoming = {}) {
   const deletedProducts = uniqueList(existing.deletedProducts, incoming.deletedProducts);
   const deletedUsers = uniqueList(existing.deletedUsers, incoming.deletedUsers);
   const processedVapiCallIds = uniqueList(existing.processedVapiCallIds, incoming.processedVapiCallIds);
+  const vapiStructuredOutputRetries = mergeByKey(existing.vapiStructuredOutputRetries, incoming.vapiStructuredOutputRetries, "callId");
   const merged = {
     ...existing,
     ...incoming,
@@ -181,6 +204,7 @@ function mergeSharedState(existing = {}, incoming = {}) {
     deletedProducts,
     deletedUsers,
     processedVapiCallIds,
+    vapiStructuredOutputRetries,
   };
   merged.orders = mergeOrders(existing.orders, incoming.orders);
   merged.customers = mergeByKey(existing.customers, incoming.customers, "id", deletedCustomers);
@@ -256,6 +280,15 @@ function extractVapiCallId(message) {
   return call.id || message?.message?.callId || message?.callId || message?.data?.callId || "";
 }
 
+function extractWebhookType(message) {
+  return String(message?.message?.type || message?.type || "").toLowerCase();
+}
+
+function extractVapiCallStatus(message) {
+  const call = extractVapiCall(message);
+  return String(call.status || message?.message?.status || message?.status || message?.data?.status || "").toLowerCase();
+}
+
 function webhookSecretIsValid(request) {
   const secret = process.env.VAPI_WEBHOOK_SECRET || "";
   if (!secret) return true;
@@ -276,13 +309,45 @@ function extractVapiAnalysis(message) {
 
 function extractStructuredOutputs(message) {
   const call = extractVapiCall(message);
-  return call.structuredOutputs || message?.message?.structuredOutputs || message?.structuredOutputs || message?.data?.structuredOutputs || {};
+  return call.artifact?.structuredOutputs
+    || call.structuredOutputs
+    || message?.message?.call?.artifact?.structuredOutputs
+    || message?.message?.artifact?.structuredOutputs
+    || message?.message?.structuredOutputs
+    || message?.artifact?.structuredOutputs
+    || message?.structuredOutputs
+    || message?.data?.call?.artifact?.structuredOutputs
+    || message?.data?.artifact?.structuredOutputs
+    || message?.data?.structuredOutputs
+    || {};
+}
+
+function hasStructuredOutputsPayload(message) {
+  const call = extractVapiCall(message);
+  return Boolean(
+    call.artifact?.structuredOutputs
+      || call.structuredOutputs
+      || message?.message?.call?.artifact?.structuredOutputs
+      || message?.message?.artifact?.structuredOutputs
+      || message?.message?.structuredOutputs
+      || message?.artifact?.structuredOutputs
+      || message?.structuredOutputs
+      || message?.data?.call?.artifact?.structuredOutputs
+      || message?.data?.artifact?.structuredOutputs
+      || message?.data?.structuredOutputs
+  );
+}
+
+function structuredOutputValues(outputs = {}) {
+  return Array.isArray(outputs) ? outputs : Object.values(outputs || {});
+}
+
+function findErpStructuredOutputIn(outputs = {}) {
+  return structuredOutputValues(outputs).find((item) => item?.name === "ERP_Order_Verification" || item?.name === "ERP Order Verification") || null;
 }
 
 function findErpStructuredOutput(message) {
-  const outputs = extractStructuredOutputs(message);
-  const values = Array.isArray(outputs) ? outputs : Object.values(outputs || {});
-  return values.find((item) => item?.name === "ERP_Order_Verification") || null;
+  return findErpStructuredOutputIn(extractStructuredOutputs(message));
 }
 
 function extractStructuredData(analysis = {}) {
@@ -642,6 +707,203 @@ function updateOrderFromVapiOutcome(order, outcome, details) {
   return history;
 }
 
+function orderMatchesCall(order, orderId, callId) {
+  return order?.id === orderId || (callId && order?.verification?.vapiCallId === callId);
+}
+
+function orderForCall(sharedState, orderId, callId) {
+  const orders = Array.isArray(sharedState.orders) ? sharedState.orders : [];
+  return orders.find((item) => orderMatchesCall(item, orderId, callId));
+}
+
+function retryDelayForAttempt(attempts) {
+  return vapiRetryDelaysMs[Math.min(attempts, Math.max(0, vapiRetryDelaysMs.length - 1))] || 0;
+}
+
+function retryRecordFor(sharedState, callId) {
+  if (!Array.isArray(sharedState.vapiStructuredOutputRetries)) sharedState.vapiStructuredOutputRetries = [];
+  return sharedState.vapiStructuredOutputRetries.find((record) => record.callId === callId);
+}
+
+function enqueueStructuredOutputRetry(sharedState, context) {
+  if (!context.callId) return null;
+  if (!Array.isArray(sharedState.vapiStructuredOutputRetries)) sharedState.vapiStructuredOutputRetries = [];
+  const existing = retryRecordFor(sharedState, context.callId);
+  const now = new Date().toISOString();
+  if (existing && ["processed", "exhausted"].includes(existing.status)) return existing;
+  const nextAttemptAt = new Date(Date.now() + retryDelayForAttempt(existing?.attempts || 0)).toISOString();
+  const record = existing || { callId: context.callId, attempts: 0, createdAt: now };
+  Object.assign(record, {
+    ...record,
+    ...context,
+    status: "pending",
+    nextAttemptAt,
+    updatedAt: now,
+    maxAttempts: vapiRetryDelaysMs.length,
+  });
+  if (!existing) sharedState.vapiStructuredOutputRetries.push(record);
+  console.warn(`[vapi-retry] queued call=${context.callId} order=${context.orderId || "none"} nextAttemptAt=${nextAttemptAt}`);
+  return record;
+}
+
+function structuredOutputsFromCall(call = {}) {
+  return call.artifact?.structuredOutputs || call.structuredOutputs || {};
+}
+
+function vapiCallUrl(callId) {
+  return `${vapiApiUrl.replace(/\/+$/, "")}/${encodeURIComponent(callId)}`;
+}
+
+async function fetchCompletedVapiCall(callId) {
+  const apiKey = process.env.VAPI_API_KEY || "";
+  if (!apiKey) throw new Error("VAPI_API_KEY is not configured for structured output retry.");
+  const url = vapiCallUrl(callId);
+  const response = await fetch(url, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${apiKey}` },
+  });
+  console.log(`[vapi-retry] GET call response status for ${callId}: ${response.status}`);
+  const body = await response.text();
+  let result = {};
+  try {
+    result = body ? JSON.parse(body) : {};
+  } catch {
+    result = { message: body };
+  }
+  if (!response.ok) throw new Error(result.message || result.error || `Vapi GET call failed with status ${response.status}.`);
+  return result.call || result;
+}
+
+function applyStructuredOutputToOrder(sharedState, order, context, structuredResult, sourceMessage = {}) {
+  const outcome = classifyVapiOutcome(sourceMessage);
+  console.log(`[vapi-webhook] parsed verification outcome: ${outcome}`);
+  console.log(`[vapi-webhook] database status before update: ${order.status || "none"} / ${order.verification?.state || "none"}`);
+  const history = updateOrderFromVapiOutcome(order, outcome, {
+    callId: context.callId,
+    transcript: context.transcript || extractVapiTranscript(sourceMessage),
+    duration: context.duration || extractVapiDuration(sourceMessage),
+    phoneNumber: context.phoneNumber || extractVapiCustomerPhone(sourceMessage),
+    assistantName: context.assistantName || extractVapiAssistantName(sourceMessage),
+    timestamp: context.timestamp || new Date().toISOString(),
+    endReason: context.endReason || extractVapiEndReason(sourceMessage),
+    analysis: structuredResult,
+  });
+  if (outcome === "VERIFIED") {
+    const recordingUrl = extractRecordingUrl(sourceMessage);
+    if (recordingUrl) order.verification.recordingUrl = recordingUrl;
+  }
+  markProcessedCall(sharedState, order, context.callId);
+  logVapiWebhookActivity(sharedState, {
+    stage: "status updated",
+    callId: context.callId,
+    orderId: order.id,
+    assistantId: context.assistantId || extractVapiAssistantId(sourceMessage),
+    outcome,
+    orderMatched: true,
+    status: order.status,
+    verificationState: order.verification?.state || "",
+    timestamp: context.timestamp || new Date().toISOString(),
+  });
+  console.log(`[vapi-webhook] database status after update: ${order.status || "none"} / ${order.verification?.state || "none"}`);
+  return { outcome, history };
+}
+
+function markRetryProcessed(sharedState, callId) {
+  const record = retryRecordFor(sharedState, callId);
+  if (record) {
+    record.status = "processed";
+    record.processedAt = new Date().toISOString();
+    record.updatedAt = record.processedAt;
+  }
+}
+
+function markRetryExhausted(sharedState, order, record, note = "Vapi structured analysis was not available after retry attempts.") {
+  record.status = "exhausted";
+  record.exhaustedAt = new Date().toISOString();
+  record.updatedAt = record.exhaustedAt;
+  record.lastError = note;
+  console.warn(`[vapi-retry] retry exhausted call=${record.callId} order=${record.orderId || "none"}`);
+  if (!order) return;
+  const history = updateOrderFromVapiOutcome(order, "INCOMPLETE", {
+    callId: record.callId,
+    transcript: record.transcript || "",
+    duration: record.duration || "",
+    phoneNumber: record.phoneNumber || "",
+    assistantName: record.assistantName || "Vapi",
+    timestamp: record.timestamp || new Date().toISOString(),
+    endReason: record.endReason || "",
+    analysis: { summary: note },
+  });
+  order.verification.summary = note;
+  markProcessedCall(sharedState, order, record.callId);
+  logVapiWebhookActivity(sharedState, {
+    stage: "retry exhausted",
+    callId: record.callId,
+    orderId: order.id,
+    outcome: "INCOMPLETE",
+    orderMatched: true,
+    status: order.status,
+    verificationState: order.verification?.state || "",
+    timestamp: record.timestamp || new Date().toISOString(),
+  });
+  return history;
+}
+
+async function processDueVapiRetryRecords() {
+  if (retryWorkerRunning) return;
+  retryWorkerRunning = true;
+  try {
+    const sharedState = await readSharedStateJson();
+    const retries = Array.isArray(sharedState.vapiStructuredOutputRetries) ? sharedState.vapiStructuredOutputRetries : [];
+    const due = retries.filter((record) => record.status === "pending" && record.nextAttemptAt && Date.parse(record.nextAttemptAt) <= Date.now());
+    if (!due.length) return;
+    for (const record of due) {
+      if (hasProcessedCall(sharedState, orderForCall(sharedState, record.orderId, record.callId), record.callId)) {
+        markRetryProcessed(sharedState, record.callId);
+        continue;
+      }
+      const attemptNumber = Number(record.attempts || 0) + 1;
+      console.log(`[vapi-retry] retry attempt ${attemptNumber}/${vapiRetryDelaysMs.length} call=${record.callId} order=${record.orderId || "none"}`);
+      try {
+        const call = await fetchCompletedVapiCall(record.callId);
+        const outputs = structuredOutputsFromCall(call);
+        const names = structuredOutputValues(outputs).map((item) => item?.name || "").filter(Boolean);
+        console.log(`[vapi-retry] structuredOutputsLastUpdatedAt=${call.artifact?.structuredOutputsLastUpdatedAt || call.structuredOutputsLastUpdatedAt || ""}`);
+        console.log(`[vapi-retry] structured output names found: ${names.join(", ") || "none"}`);
+        const erpOutput = findErpStructuredOutputIn(outputs);
+        const orderId = record.orderId || call.metadata?.orderId || erpOutput?.result?.order_number || "";
+        const order = orderForCall(sharedState, orderId, record.callId);
+        if (erpOutput?.result && order) {
+          const result = applyStructuredOutputToOrder(sharedState, order, { ...record, orderId }, erpOutput.result, { call });
+          markRetryProcessed(sharedState, record.callId);
+          console.log(`[vapi-retry] structured result applied call=${record.callId} outcome=${result.outcome}`);
+          continue;
+        }
+        if (!erpOutput) console.warn(`[vapi-retry] ERP_Order_Verification not found for call=${record.callId}. structuredOutputs=${JSON.stringify(outputs)}`);
+        record.attempts = attemptNumber;
+        if (record.attempts >= vapiRetryDelaysMs.length) {
+          markRetryExhausted(sharedState, order, record);
+        } else {
+          record.nextAttemptAt = new Date(Date.now() + retryDelayForAttempt(record.attempts)).toISOString();
+          record.updatedAt = new Date().toISOString();
+        }
+      } catch (error) {
+        record.attempts = attemptNumber;
+        record.lastError = error.message || "Retry failed.";
+        if (record.attempts >= vapiRetryDelaysMs.length) {
+          markRetryExhausted(sharedState, orderForCall(sharedState, record.orderId, record.callId), record);
+        } else {
+          record.nextAttemptAt = new Date(Date.now() + retryDelayForAttempt(record.attempts)).toISOString();
+          record.updatedAt = new Date().toISOString();
+        }
+      }
+    }
+    await writeSharedStateJson(sharedState);
+  } finally {
+    retryWorkerRunning = false;
+  }
+}
+
 function formatMoney(value) {
   const amount = Number(value || 0);
   return amount.toLocaleString("en-US", { style: "currency", currency: "USD" });
@@ -968,6 +1230,7 @@ const server = createServer(async (request, response) => {
         return;
       }
       const message = await parseJsonBody(request);
+      const messageType = extractWebhookType(message);
       const call = extractVapiCall(message);
       const callId = extractVapiCallId(message);
       const orderId = extractVapiOrderId(message);
@@ -975,24 +1238,50 @@ const server = createServer(async (request, response) => {
       const transcript = extractVapiTranscript(message);
       const analysis = extractVapiAnalysis(message);
       const structuredOutputs = extractStructuredOutputs(message);
-      const structuredOutputValues = Array.isArray(structuredOutputs) ? structuredOutputs : Object.values(structuredOutputs || {});
+      const outputValues = structuredOutputValues(structuredOutputs);
       const erpStructuredOutput = findErpStructuredOutput(message);
-      const structuredResult = extractVapiStructuredResult(message);
+      const legacyStructuredResult = extractStructuredData(analysis);
+      const hasLegacyStructuredOutcome = Boolean(extractStructuredOutcome(legacyStructuredResult));
+      const structuredResult = erpStructuredOutput?.result || (hasLegacyStructuredOutcome ? legacyStructuredResult : {});
       const endReason = extractVapiEndReason(message);
       const phoneNumber = extractVapiCustomerPhone(message);
       const duration = extractVapiDuration(message);
       const assistantName = extractVapiAssistantName(message);
       const timestamp = call.endedAt || call.updatedAt || call.createdAt || message?.timestamp || message?.message?.timestamp || new Date().toISOString();
-      const outcome = classifyVapiOutcome(message);
-      const structuredOutputNames = structuredOutputValues.map((item) => item?.name || "").filter(Boolean);
+      const outcome = erpStructuredOutput?.result || hasLegacyStructuredOutcome || !hasStructuredOutputsPayload(message) ? classifyVapiOutcome(message) : "";
+      const structuredOutputNames = outputValues.map((item) => item?.name || "").filter(Boolean);
       console.log("[vapi-webhook] Webhook received");
+      console.log(`[vapi-webhook] message type: ${messageType || "none"}`);
       console.log(`[vapi-webhook] Structured outputs found: ${structuredOutputNames.length}`);
       structuredOutputNames.forEach((name) => console.log(`[vapi-webhook] Structured output name: ${name}`));
       console.log(`[vapi-webhook] verification_outcome: ${structuredResult?.verification_outcome || structuredResult?.verificationOutcome || structuredResult?.outcome || "none"}`);
       if (!erpStructuredOutput) console.log("[vapi-webhook] ERP_Order_Verification not found. structuredOutputs:", JSON.stringify(structuredOutputs, null, 2));
       console.log(`[vapi-webhook] call=${callId || "none"} order=${orderId || "none"} assistant=${assistantId || "none"} outcome=${outcome} phone=${phoneNumber ? maskPhoneNumber(phoneNumber) : "none"}`);
 
-      if (!isFinalVapiEvent(message)) {
+      const sharedState = await readSharedStateJson();
+      const order = orderForCall(sharedState, orderId, callId);
+      console.log(`[vapi-webhook] Matched order: ${order?.id || "none"}`);
+
+      if (messageType === "status-update") {
+        const callStatus = extractVapiCallStatus(message);
+        console.log(`[vapi-webhook] status-update status=${callStatus || "none"}`);
+        if (order && ["in-progress", "in_progress", "ringing", "queued"].includes(callStatus)) {
+          if (order.status !== "verification_in_progress") recordOrderStatus(order, "verification_in_progress", "Assistant Verification call is in progress.", "Vapi");
+          order.verification = {
+            ...(order.verification || {}),
+            state: "verification_in_progress",
+            method: "Assistant",
+            vapiCallId: callId || order.verification?.vapiCallId || "",
+            vapiCallStatus: callStatus || "in-progress",
+            lastVerificationAttempt: new Date().toISOString(),
+          };
+          await writeSharedStateJson(sharedState);
+        }
+        sendJson(response, 200, { ok: true, ignored: true, type: "status-update", status: callStatus });
+        return;
+      }
+
+      if (messageType && messageType !== "end-of-call-report" && !isFinalVapiEvent(message)) {
         sendJson(response, 200, { ok: true, ignored: true, reason: "Webhook event is not an end-of-call event." });
         return;
       }
@@ -1002,21 +1291,17 @@ const server = createServer(async (request, response) => {
         return;
       }
 
-      const sharedState = await readSharedStateJson();
       logVapiWebhookActivity(sharedState, {
         stage: "incoming webhook",
         callId,
         orderId,
         assistantId,
-        outcome,
+        outcome: outcome || "pending_structured_output",
         endReason,
         phoneNumber: phoneNumber ? maskPhoneNumber(phoneNumber) : "",
         orderMatched: false,
         timestamp,
       });
-      const orders = Array.isArray(sharedState.orders) ? sharedState.orders : [];
-      const order = orders.find((item) => item.id === orderId || item.verification?.vapiCallId === callId);
-      console.log(`[vapi-webhook] Matched order: ${order?.id || "none"}`);
       if (!order) {
         logVapiManualReview(sharedState, {
           reason: "No matching order number was found.",
@@ -1042,6 +1327,25 @@ const server = createServer(async (request, response) => {
       if (outcome === "TRANSFERRED") {
         console.log(`[vapi-webhook] transfer event ignored until final outcome for call=${callId || "none"} order=${order.id}`);
         sendJson(response, 200, { ok: true, ignored: true, outcome, reason: "Transfer event does not update order status." });
+        return;
+      }
+
+      if (!erpStructuredOutput?.result && !hasLegacyStructuredOutcome && hasStructuredOutputsPayload(message)) {
+        enqueueStructuredOutputRetry(sharedState, {
+          callId,
+          orderId: order.id,
+          assistantId,
+          transcript,
+          duration,
+          phoneNumber,
+          assistantName,
+          timestamp,
+          endReason,
+          metadata: call.metadata || message.metadata || {},
+        });
+        await writeSharedStateJson(sharedState);
+        processDueVapiRetryRecords().catch((error) => console.error(`[vapi-retry] background processing failed: ${error.message}`));
+        sendJson(response, 200, { ok: true, queued: true, orderId: order.id, callId });
         return;
       }
 
@@ -1154,4 +1458,8 @@ const server = createServer(async (request, response) => {
 
 server.listen(port, host, () => {
   console.log(`Allied ERP listening on ${host}:${port}`);
+  processDueVapiRetryRecords().catch((error) => console.error(`[vapi-retry] startup processing failed: ${error.message}`));
+  setInterval(() => {
+    processDueVapiRetryRecords().catch((error) => console.error(`[vapi-retry] scheduled processing failed: ${error.message}`));
+  }, retryWorkerIntervalMs);
 });

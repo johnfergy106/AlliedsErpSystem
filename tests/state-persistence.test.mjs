@@ -8,6 +8,9 @@ import test, { after, before } from "node:test";
 let appProcess;
 let appPort;
 let dataDir;
+let vapiServer;
+let vapiPort;
+const vapiCallResponses = new Map();
 
 function listen(server) {
   return new Promise((resolve) => {
@@ -45,6 +48,19 @@ async function getState() {
   const response = await fetch(`http://127.0.0.1:${appPort}/api/state`);
   assert.equal(response.ok, true);
   return response.json();
+}
+
+async function waitForOrder(orderId, predicate, timeoutMs = 1000) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    const state = await getState();
+    const order = state.orders.find((item) => item.id === orderId);
+    if (order && predicate(order, state)) return { order, state };
+    await wait(25);
+  }
+  const state = await getState();
+  const order = state.orders.find((item) => item.id === orderId);
+  assert.fail(`Timed out waiting for ${orderId}. Current order: ${JSON.stringify(order)}`);
 }
 
 async function postVapiWebhook(body) {
@@ -102,8 +118,76 @@ function vapiStructuredOutputWebhook({ callId, orderId, result, transcript = "" 
   };
 }
 
+function vapiEmptyStructuredOutputWebhook({ callId, orderId, transcript = "" }) {
+  return {
+    message: {
+      type: "end-of-call-report",
+      call: {
+        id: callId,
+        assistantId: "asst_test",
+        assistant: { name: "Allied Verification Assistant" },
+        metadata: { orderId },
+        status: "ended",
+        endedReason: "customer-ended-call",
+        customer: { number: "+19515551234" },
+        startedAt: "2026-07-17T15:00:00.000Z",
+        endedAt: "2026-07-17T15:02:15.000Z",
+        transcript,
+        artifact: { structuredOutputs: {} },
+      },
+    },
+  };
+}
+
+function vapiStatusUpdate({ callId, orderId, status }) {
+  return {
+    message: {
+      type: "status-update",
+      call: {
+        id: callId,
+        metadata: { orderId },
+        status,
+        customer: { number: "+19515551234" },
+      },
+    },
+  };
+}
+
+function completedVapiCall({ callId, orderId, result, name = "ERP_Order_Verification" }) {
+  return {
+    id: callId,
+    metadata: { orderId },
+    status: "ended",
+    endedReason: "customer-ended-call",
+    customer: { number: "+19515551234" },
+    startedAt: "2026-07-17T15:00:00.000Z",
+    endedAt: "2026-07-17T15:02:15.000Z",
+    transcript: "Completed call transcript.",
+    artifact: {
+      structuredOutputsLastUpdatedAt: "2026-07-17T15:02:30.000Z",
+      structuredOutputs: {
+        output_id: {
+          name,
+          result: {
+            order_number: orderId,
+            ...result,
+          },
+        },
+      },
+    },
+  };
+}
+
 before(async () => {
   const { createServer } = await import("node:http");
+  vapiServer = createServer((request, response) => {
+    const callId = new URL(request.url, "http://127.0.0.1").pathname.split("/").filter(Boolean).at(-1);
+    const responses = vapiCallResponses.get(callId) || [];
+    const payload = responses.length > 1 ? responses.shift() : responses[0];
+    response.writeHead(payload ? 200 : 404, { "Content-Type": "application/json" });
+    response.end(JSON.stringify(payload || { message: "not found" }));
+  });
+  vapiPort = await listen(vapiServer);
   const portServer = createServer();
   appPort = await listen(portServer);
   await new Promise((resolve) => portServer.close(resolve));
@@ -114,6 +198,10 @@ before(async () => {
       ...process.env,
       PORT: String(appPort),
       ALLIED_ERP_DATA_DIR: dataDir,
+      VAPI_API_KEY: "test-key",
+      VAPI_API_URL: `http://127.0.0.1:${vapiPort}/call`,
+      VAPI_STRUCTURED_OUTPUT_RETRY_DELAYS_MS: "10,20,30",
+      VAPI_RETRY_WORKER_INTERVAL_MS: "5",
     },
     stdio: "ignore",
   });
@@ -122,6 +210,7 @@ before(async () => {
 
 after(async () => {
   if (appProcess) appProcess.kill();
+  if (vapiServer) await new Promise((resolve) => vapiServer.close(resolve));
   if (dataDir) await rm(dataDir, { recursive: true, force: true });
 });
 
@@ -302,6 +391,144 @@ test("Vapi webhook reads ERP_Order_Verification structuredOutputs result", async
   assert.equal(order.verification.changeSummary, "Customer requested an updated ship date.");
   assert.equal(order.verification.changesReported, "true");
   assert.equal(order.verificationHistory.at(-1).summary, "Buyer confirmed the order.");
+});
+
+test("Vapi status-update in-progress keeps the order calling without finalizing", async () => {
+  await postState({
+    orders: [{ id: "SO-VAPI-STATUS", customerId: "C-VAPI", rep: "Jordan Lee", status: "pending" }],
+  });
+
+  await postVapiWebhook(vapiStatusUpdate({ callId: "call_status_1", orderId: "SO-VAPI-STATUS", status: "in-progress" }));
+
+  const state = await getState();
+  const order = state.orders.find((item) => item.id === "SO-VAPI-STATUS");
+  assert.equal(order.status, "verification_in_progress");
+  assert.equal(order.verification.state, "verification_in_progress");
+  assert.equal(state.processedVapiCallIds?.includes("call_status_1"), false);
+});
+
+test("Vapi status-update ended with empty outputs does not finalize or enqueue", async () => {
+  await postState({
+    orders: [{ id: "SO-VAPI-STATUS-END", customerId: "C-VAPI", rep: "Jordan Lee", status: "verification_in_progress" }],
+  });
+
+  await postVapiWebhook(vapiStatusUpdate({ callId: "call_status_end_1", orderId: "SO-VAPI-STATUS-END", status: "ended" }));
+
+  const state = await getState();
+  const order = state.orders.find((item) => item.id === "SO-VAPI-STATUS-END");
+  assert.equal(order.status, "verification_in_progress");
+  assert.equal(order.verification, undefined);
+  assert.equal(state.vapiStructuredOutputRetries?.some((record) => record.callId === "call_status_end_1"), false);
+});
+
+test("Vapi end-of-call empty output retries and applies fetched structured output", async () => {
+  await postState({
+    orders: [{
+      id: "SO-VAPI-RETRY",
+      customerId: "C-VAPI",
+      rep: "Jordan Lee",
+      status: "verification_in_progress",
+      verification: { vapiCallId: "call_retry_1", state: "verification_in_progress", method: "Assistant" },
+    }],
+  });
+  vapiCallResponses.set("call_retry_1", [completedVapiCall({
+    callId: "call_retry_1",
+    orderId: "SO-VAPI-RETRY",
+    result: { verification_outcome: "VERIFIED", summary: "Fetched output verified the order." },
+  })]);
+
+  const response = await postVapiWebhook(vapiEmptyStructuredOutputWebhook({
+    callId: "call_retry_1",
+    orderId: "SO-VAPI-RETRY",
+    transcript: "Initial webhook transcript.",
+  }));
+  assert.equal(response.queued, true);
+  const duplicate = await postVapiWebhook(vapiEmptyStructuredOutputWebhook({
+    callId: "call_retry_1",
+    orderId: "SO-VAPI-RETRY",
+    transcript: "Duplicate initial webhook transcript.",
+  }));
+  assert.equal(duplicate.queued, true);
+
+  let state = await getState();
+  assert.equal(state.processedVapiCallIds?.includes("call_retry_1"), false);
+  assert.equal(state.vapiStructuredOutputRetries.filter((record) => record.callId === "call_retry_1").length, 1);
+  assert.equal(state.vapiStructuredOutputRetries.some((record) => record.callId === "call_retry_1" && record.status === "pending"), true);
+
+  const { order } = await waitForOrder("SO-VAPI-RETRY", (item) => item.status === "verified", 1200);
+  assert.equal(order.verification.state, "verified");
+  assert.equal(order.verification.summary, "Fetched output verified the order.");
+});
+
+test("Vapi retry succeeds when output becomes available on second attempt", async () => {
+  await postState({
+    orders: [{
+      id: "SO-VAPI-SECOND-RETRY",
+      customerId: "C-VAPI",
+      rep: "Jordan Lee",
+      status: "verification_in_progress",
+      verification: { vapiCallId: "call_retry_2", state: "verification_in_progress", method: "Assistant" },
+    }],
+  });
+  vapiCallResponses.set("call_retry_2", [
+    { id: "call_retry_2", artifact: { structuredOutputs: {} }, metadata: { orderId: "SO-VAPI-SECOND-RETRY" } },
+    completedVapiCall({
+      callId: "call_retry_2",
+      orderId: "SO-VAPI-SECOND-RETRY",
+      result: { verification_outcome: "CANCELLED", summary: "Buyer cancelled.", cancellation_reason: "Ordered elsewhere" },
+    }),
+  ]);
+
+  await postVapiWebhook(vapiEmptyStructuredOutputWebhook({ callId: "call_retry_2", orderId: "SO-VAPI-SECOND-RETRY" }));
+
+  const { order } = await waitForOrder("SO-VAPI-SECOND-RETRY", (item) => item.status === "cancelled", 1200);
+  assert.equal(order.verification.state, "cancelled");
+  assert.equal(order.verification.cancellationNotes, "Ordered elsewhere");
+});
+
+test("Vapi retry exhaustion changes final verification to needs review", async () => {
+  await postState({
+    orders: [{
+      id: "SO-VAPI-RETRY-EXHAUST",
+      customerId: "C-VAPI",
+      rep: "Jordan Lee",
+      status: "verification_in_progress",
+      verification: { vapiCallId: "call_retry_exhaust", state: "verification_in_progress", method: "Assistant" },
+    }],
+  });
+  vapiCallResponses.set("call_retry_exhaust", [
+    { id: "call_retry_exhaust", artifact: { structuredOutputs: {} }, metadata: { orderId: "SO-VAPI-RETRY-EXHAUST" } },
+  ]);
+
+  await postVapiWebhook(vapiEmptyStructuredOutputWebhook({ callId: "call_retry_exhaust", orderId: "SO-VAPI-RETRY-EXHAUST" }));
+
+  const { order, state } = await waitForOrder("SO-VAPI-RETRY-EXHAUST", (item) => item.verification?.state === "needs_review", 1500);
+  assert.equal(order.status, "verification_in_progress");
+  assert.equal(order.verification.summary, "Vapi structured analysis was not available after retry attempts.");
+  assert.equal(state.vapiStructuredOutputRetries.find((record) => record.callId === "call_retry_exhaust").status, "exhausted");
+});
+
+test("Vapi retry accepts alternate ERP Order Verification output name", async () => {
+  await postState({
+    orders: [{
+      id: "SO-VAPI-ALT-NAME",
+      customerId: "C-VAPI",
+      rep: "Jordan Lee",
+      status: "verification_in_progress",
+      verification: { vapiCallId: "call_alt_name", state: "verification_in_progress", method: "Assistant" },
+    }],
+  });
+  vapiCallResponses.set("call_alt_name", [completedVapiCall({
+    callId: "call_alt_name",
+    orderId: "SO-VAPI-ALT-NAME",
+    name: "ERP Order Verification",
+    result: { verification_outcome: "VERIFIED", summary: "Alternate name verified." },
+  })]);
+
+  await postVapiWebhook(vapiEmptyStructuredOutputWebhook({ callId: "call_alt_name", orderId: "SO-VAPI-ALT-NAME" }));
+
+  const { order } = await waitForOrder("SO-VAPI-ALT-NAME", (item) => item.status === "verified", 1200);
+  assert.equal(order.verification.summary, "Alternate name verified.");
 });
 
 test("Vapi cancelled webhook cancels the order", async () => {
