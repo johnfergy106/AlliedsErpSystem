@@ -165,6 +165,7 @@ function normalizeState(data) {
       statusChangedBy: by,
       statusHistory: Array.isArray(order.statusHistory) && order.statusHistory.length ? order.statusHistory : [{ status, label: statusLabel(status), at, by, notes: order.verification?.summary || "" }],
       verificationHistory: Array.isArray(order.verificationHistory) ? order.verificationHistory : [],
+      purchase_order_number: order.purchase_order_number || order.purchaseOrderNumber || order.purchaseOrder || "",
       vapiNotes: Array.isArray(order.vapiNotes) ? order.vapiNotes : [],
       vapi_notes_count: Array.isArray(order.vapiNotes) ? order.vapiNotes.length : Number(order.vapi_notes_count || 0),
       has_vapi_changes: Boolean(order.has_vapi_changes),
@@ -175,6 +176,7 @@ function normalizeState(data) {
       vapi_change_reviewed_by: order.vapi_change_reviewed_by || "",
       vapi_change_reviewed_at: order.vapi_change_reviewed_at || "",
       vapi_change_review_note: order.vapi_change_review_note || "",
+      customerChangeRequests: Array.isArray(order.customerChangeRequests) ? order.customerChangeRequests : [],
       processedVapiCallIds: Array.isArray(order.processedVapiCallIds) ? order.processedVapiCallIds : [],
       creditHoldNotes: order.creditHoldNotes || order.verification?.creditHoldNotes || "",
       hiddenFor: Array.isArray(order.hiddenFor) ? order.hiddenFor : [],
@@ -396,6 +398,10 @@ function customerAddress(customer) {
 
 function orderBuyerName(order) {
   return order?.buyerName || customerById(order?.customerId)?.contact || "";
+}
+
+function purchaseOrderNumber(order = {}) {
+  return String(order.purchase_order_number || order.purchaseOrderNumber || order.purchaseOrder || "").trim();
 }
 
 function orderPartLabel(order) {
@@ -887,6 +893,7 @@ function vapiNotesForOrder(order) {
 function vapiChangeAlert(order) {
   if (!order?.has_vapi_changes) return "";
   const pending = pendingVapiChange(order);
+  const corrections = customerCorrectionsForOrder(order);
   return `<div class="change-alert ${pending ? "pending" : ""}" role="alert">
     <strong>Customer information changes were reported during the Vapi verification call.</strong>
     <div class="note-grid">
@@ -895,10 +902,26 @@ function vapiChangeAlert(order) {
       <div><span>Call ID</span><p>${html(order.vapi_change_call_id || "Not available")}</p></div>
       <div><span>Review Status</span><p>${html(order.vapi_change_review_status || "Pending Review")}</p></div>
     </div>
+    ${corrections.length ? `<div class="corrections-list">${corrections.map(correctionCard).join("")}</div>` : ""}
     <div class="inline-actions">
       <button class="btn mini-btn" type="button" onclick="openVapiNotes('${order.id}')">Review Changes</button>
       ${pending ? `<button class="btn mini-btn primary" type="button" onclick="setVapiChangeReviewStatus('${order.id}', 'Reviewed')">Mark Reviewed</button>` : ""}
     </div>
+  </div>`;
+}
+
+function customerCorrectionsForOrder(order = {}) {
+  return Array.isArray(order.customerChangeRequests) ? order.customerChangeRequests : [];
+}
+
+function correctionCard(change) {
+  return `<div class="correction-card">
+    <div><strong>${html(change.label || change.field || "Customer Correction")}</strong><span class="status verification-status issue">${html(change.status || "Pending Review")}</span></div>
+    <div class="note-grid">
+      <div><span>Current Value</span><p>${html(change.current_value || "Not provided")}</p></div>
+      <div><span>Customer Stated</span><p>${html(change.customer_value || "Not provided")}</p></div>
+    </div>
+    ${change.status === "Pending Review" ? `<div class="inline-actions"><button class="btn mini-btn primary" type="button" onclick="resolveCustomerCorrection('${html(change.order_id)}', '${html(change.id)}', 'Accepted')">Accept Change</button><button class="btn mini-btn" type="button" onclick="resolveCustomerCorrection('${html(change.order_id)}', '${html(change.id)}', 'Rejected')">Reject Change</button></div>` : ""}
   </div>`;
 }
 
@@ -1118,6 +1141,7 @@ function vapiNoteCard(order, note) {
       <div><span>Summary</span><p>${html(note.summary || "No summary was provided.")}</p></div>
       ${note.cancellation_reason ? `<div><span>Cancellation Reason</span><p>${html(note.cancellation_reason)}</p></div>` : ""}
       ${note.callback_notes ? `<div><span>Callback Notes</span><p>${html(note.callback_notes)}</p></div>` : ""}
+      ${note.purchase_order_note ? `<div><span>Purchase Order Number</span><p>${html(note.purchase_order_note)}</p></div>` : ""}
       ${note.change_summary ? `<div><span>Change Summary</span><p>${html(note.change_summary)}</p></div>` : ""}
       <div><span>Review Status</span><p>${html(note.change_review_status || "No changes reported")}</p></div>
       <div><span>Call Duration</span><p>${html(note.call_duration || "Not available")}</p></div>
@@ -1144,6 +1168,7 @@ function copyVapiNote(orderId, noteId) {
     `Summary: ${note.summary || ""}`,
     note.cancellation_reason ? `Cancellation reason: ${note.cancellation_reason}` : "",
     note.callback_notes ? `Callback notes: ${note.callback_notes}` : "",
+    note.purchase_order_note ? `Purchase order number: ${note.purchase_order_note}` : "",
     note.change_summary ? `Change summary: ${note.change_summary}` : "",
     `Review status: ${note.change_review_status || ""}`,
     `Call ID: ${note.vapi_call_id || ""}`,
@@ -1178,6 +1203,45 @@ function setVapiChangeReviewStatus(orderId, status) {
   render();
   openVapiNotes(orderId);
   toast(`Vapi change marked ${status}.`);
+}
+
+function resolveCustomerCorrection(orderId, correctionId, status) {
+  const order = state.orders.find((item) => item.id === orderId);
+  if (!canAccessOrder(order)) return toast("You can only review changes for orders you can access.");
+  const change = customerCorrectionsForOrder(order).find((item) => item.id === correctionId);
+  if (!change) return toast("Customer correction was not found.");
+  const previous = change.status || "Pending Review";
+  if (status === "Accepted" && change.field === "purchase_order_number") {
+    order.purchase_order_number = change.customer_value || "";
+  }
+  change.status = status;
+  change.reviewed_by = currentUser?.name || "";
+  change.reviewed_at = timestamp();
+  if (Array.isArray(order.vapiNotes)) {
+    order.vapiNotes = order.vapiNotes.map((note) => note.vapi_call_id === change.vapi_call_id ? { ...note, change_review_status: status } : note);
+  }
+  if (!order.customerChangeRequests.some((item) => item.status === "Pending Review")) {
+    order.vapi_change_review_status = status;
+    order.vapi_change_reviewed_by = change.reviewed_by;
+    order.vapi_change_reviewed_at = change.reviewed_at;
+  }
+  if (!Array.isArray(order.auditLog)) order.auditLog = [];
+  order.auditLog.push({
+    action: status === "Accepted" ? "Change accepted" : "Change rejected",
+    order_number: order.id,
+    vapi_call_id: change.vapi_call_id || "",
+    employee: currentUser?.name || "",
+    timestamp: new Date().toISOString(),
+    previous_status: previous,
+    new_status: status,
+    field: change.field,
+    old_value: change.current_value || "",
+    new_value: change.customer_value || "",
+  });
+  saveState();
+  render();
+  openVapiNotes(orderId);
+  toast(status === "Accepted" ? "Purchase Order Number updated." : "Purchase Order Number correction rejected.");
 }
 
 function openOrderChat(orderId) {
@@ -1515,10 +1579,11 @@ function orderDocumentHtml(order) {
         <div class="box">
           <h2>Order Details</h2>
           <div class="row"><span>Account Number</span><strong>${html(order.accountNumber || "")}</strong></div>
+          <div class="row"><span>Purchase Order Number</span><strong>${html(purchaseOrderNumber(order) || "Not provided")}</strong></div>
           <div class="row"><span>Account Type</span><strong>${html(accountStatusLabel(order.accountStatus || "old"))}</strong></div>
           <div class="row"><span>Ship Date</span><strong>${html(order.shipDate || "")}</strong></div>
           <div class="row"><span>Tracking</span><strong>${html(order.trackingInfo || "")}</strong></div>
-          <div class="row"><span>Purchase Order</span><strong>${html(customer.purchaseOrder || "")}</strong></div>
+          <div class="row"><span>Customer Card PO</span><strong>${html(customer.purchaseOrder || "Not provided")}</strong></div>
           <div class="row"><span>Promo Number</span><strong>${html(customer.promoNumber || "")}</strong></div>
           <div class="row"><span>Terms</span><strong>${html(customer.terms || "")}</strong></div>
           <div class="row"><span>Bill To</span><strong>${html(order.billTo || "")}</strong></div>
@@ -1973,6 +2038,7 @@ function openOrderFormFromDraft(order, id = null) {
         <div class="field"><label>Customer</label><select id="orderCustomer" onchange="handleOrderCustomerChange()"><option value="__add_new__">＋ Add New Customer</option>${state.customers.map((customer) => `<option value="${customer.id}" ${customer.id === order.customerId ? "selected" : ""}>${html(customer.name)}</option>`).join("")}</select></div>
         <div class="field"><label>Sales Rep</label><input id="orderRep" value="${html(order.rep)}" ${isAdmin() ? "" : "readonly"} required /></div>
         <div class="field"><label>Account Number (Optional)</label><input id="accountNumber" value="${html(order.accountNumber || "")}" /></div>
+        <div class="field"><label>Purchase Order Number (Optional)</label><input id="purchaseOrderNumber" value="${html(purchaseOrderNumber(order))}" maxlength="100" placeholder="Customer PO number" /></div>
         <div class="field"><label>Ship Date (Optional)</label><input id="shipDate" type="date" value="${html(order.shipDate || "")}" /></div>
         <div class="field">
           <label>Account Type</label>
@@ -2118,6 +2184,7 @@ function saveOrder(event) {
     partNumber: savedPartNumber,
     date: document.querySelector("#orderDate").value,
     accountNumber: document.querySelector("#accountNumber").value.trim(),
+    purchase_order_number: document.querySelector("#purchaseOrderNumber").value.trim(),
     shipDate: document.querySelector("#shipDate").value,
     trackingInfo: document.querySelector("#trackingInfo").value.trim(),
     accountStatus: document.querySelector('input[name="accountStatus"]:checked')?.value || "old",
@@ -2166,6 +2233,7 @@ function saveOrder(event) {
     vapi_change_reviewed_by: existingOrder?.vapi_change_reviewed_by || "",
     vapi_change_reviewed_at: existingOrder?.vapi_change_reviewed_at || "",
     vapi_change_review_note: existingOrder?.vapi_change_review_note || "",
+    customerChangeRequests: existingOrder?.customerChangeRequests || [],
     auditLog: existingOrder?.auditLog || [],
     kickbackStatus: existingOrder?.kickbackStatus || existingOrder?.verification?.kickbackStatus || "None",
     kickbackNotes: existingOrder?.kickbackNotes || existingOrder?.verification?.kickbackNotes || "",
@@ -2220,6 +2288,7 @@ function saveOrder(event) {
       preferredPhone: order.preferredPhone,
       address: order.address,
       accountNumber: order.accountNumber,
+      purchase_order_number: order.purchase_order_number,
       accountStatus: order.accountStatus,
       billTo: order.billTo,
       promoTicket: order.promoTicket,
@@ -2551,6 +2620,7 @@ function buildVerificationPayload(order) {
       buyerName: orderBuyerName(order),
       customer,
       accountNumber: order.accountNumber || "",
+      purchase_order_number: purchaseOrderNumber(order),
       accountStatus: order.accountStatus || "old",
       shipDate: order.shipDate || "",
       trackingInfo: order.trackingInfo || "",

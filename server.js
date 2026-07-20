@@ -60,10 +60,24 @@ function resolveRequestPath(url) {
 async function readSharedStateJson() {
   if (!existsSync(sharedStatePath)) return {};
   try {
-    return JSON.parse(await readFile(sharedStatePath, "utf8"));
+    return migrateSharedState(JSON.parse(await readFile(sharedStatePath, "utf8")));
   } catch {
     return {};
   }
+}
+
+function migrateOrderRecord(order = {}) {
+  return {
+    ...order,
+    purchase_order_number: purchaseOrderNumber(order) || "",
+  };
+}
+
+function migrateSharedState(state = {}) {
+  return {
+    ...state,
+    orders: Array.isArray(state.orders) ? state.orders.map(migrateOrderRecord) : state.orders,
+  };
 }
 
 async function writeSharedStateJsonNow(state) {
@@ -173,6 +187,15 @@ function mergeAuditEntries(...orders) {
   return [...entries.values()].sort((a, b) => Date.parse(b.timestamp || "") - Date.parse(a.timestamp || ""));
 }
 
+function mergeCustomerChangeRequests(...orders) {
+  const changes = new Map();
+  orders.flatMap((order) => (Array.isArray(order?.customerChangeRequests) ? order.customerChangeRequests : [])).forEach((change, index) => {
+    const key = change.id || [change.field, change.vapi_call_id, change.customer_value, index].map((value) => value || "").join("|");
+    changes.set(key, change);
+  });
+  return [...changes.values()].sort((a, b) => Date.parse(b.created_at || "") - Date.parse(a.created_at || ""));
+}
+
 function mergeStateAuditLogs(...states) {
   const entries = new Map();
   states.flatMap((state) => (Array.isArray(state?.auditLog) ? state.auditLog : [])).forEach((entry, index) => {
@@ -197,11 +220,13 @@ function mergeOrderRecord(existing = {}, incoming = {}) {
   return {
     ...loser,
     ...winner,
+    purchase_order_number: purchaseOrderNumber(winner) || purchaseOrderNumber(loser) || "",
     messages: mergeByKey(loser.messages, winner.messages, "id"),
     statusHistory: mergeStatusHistory(loser, winner),
     verificationHistory: mergeVerificationHistory(loser, winner),
     vapiNotes,
     vapi_notes_count: vapiNotes.length,
+    customerChangeRequests: mergeCustomerChangeRequests(loser, winner),
     auditLog: mergeAuditEntries(loser, winner),
     processedVapiCallIds: uniqueList(loser.processedVapiCallIds, winner.processedVapiCallIds),
     hiddenFor: uniqueList(loser.hiddenFor, winner.hiddenFor),
@@ -214,7 +239,7 @@ function mergeOrders(existing = [], incoming = []) {
     const id = order?.id;
     if (!id) return;
     const previous = records.get(String(id));
-    records.set(String(id), previous ? mergeOrderRecord(previous, order) : order);
+    records.set(String(id), previous ? mergeOrderRecord(previous, order) : migrateOrderRecord(order));
   });
   return [...records.values()];
 }
@@ -696,6 +721,20 @@ function meaningfulChangeSummary(summary = "") {
   return clean;
 }
 
+function purchaseOrderChanged(analysis = {}) {
+  return structuredBoolean(analysis, "purchase_order_number_changed", "purchaseOrderNumberChanged");
+}
+
+function purchaseOrderCorrectionSummary(analysis = {}) {
+  const changed = purchaseOrderChanged(analysis);
+  const oldValue = structuredText(analysis, "purchase_order_number_old", "purchaseOrderNumberOld");
+  const newValue = structuredText(analysis, "purchase_order_number_new", "purchaseOrderNumberNew");
+  if (changed && oldValue && newValue) return `Purchase Order Number corrected: Current: ${oldValue}. Customer stated: ${newValue}.`;
+  if (changed && newValue) return `Purchase Order Number added: ${newValue}.`;
+  if (oldValue) return `Purchase Order Number confirmed: ${oldValue}.`;
+  return "";
+}
+
 function ensureAuditLog(sharedState) {
   if (!Array.isArray(sharedState.auditLog)) sharedState.auditLog = [];
   return sharedState.auditLog;
@@ -718,6 +757,10 @@ function upsertVapiOrderNote(sharedState, order, details) {
   const endedAt = extractVapiCall(sourceMessage).endedAt || timestamp || now;
   const changesReported = structuredBoolean(analysis, "changes_reported", "changesReported");
   const changeSummary = structuredText(analysis, "change_summary", "changeSummary");
+  const poChanged = purchaseOrderChanged(analysis);
+  const poOld = structuredText(analysis, "purchase_order_number_old", "purchaseOrderNumberOld") || purchaseOrderNumber(order);
+  const poNew = structuredText(analysis, "purchase_order_number_new", "purchaseOrderNumberNew");
+  const poNote = purchaseOrderCorrectionSummary(analysis);
   const note = {
     id: existing?.id || `VN-${callId || Date.now()}`,
     sales_order_id: order.id,
@@ -736,7 +779,12 @@ function upsertVapiOrderNote(sharedState, order, details) {
     callback_notes: outcome === "CALLBACK_REQUESTED" ? conciseCallbackNotes(transcript, analysis) : structuredText(analysis, "callback_notes", "callbackNotes"),
     changes_reported: changesReported,
     change_summary: changeSummary,
-    change_review_status: existing?.change_review_status || (changesReported || meaningfulChangeSummary(changeSummary) ? "Pending Review" : ""),
+    purchase_order_number: purchaseOrderNumber(order),
+    purchase_order_number_changed: poChanged,
+    purchase_order_number_old: poOld,
+    purchase_order_number_new: poNew,
+    purchase_order_note: poNote,
+    change_review_status: existing?.change_review_status || (changesReported || meaningfulChangeSummary(changeSummary) || poChanged ? "Pending Review" : ""),
     transcript: transcript || "",
     ended_reason: endReason || "",
     assistant_name: assistantName || "",
@@ -762,15 +810,34 @@ function updateVapiNotesCount(order) {
 }
 
 function applyVapiChangeFlag(sharedState, order, note, callId) {
-  const shouldFlag = note?.changes_reported === true || Boolean(meaningfulChangeSummary(note?.change_summary));
+  const shouldFlag = note?.changes_reported === true || Boolean(meaningfulChangeSummary(note?.change_summary)) || note?.purchase_order_number_changed === true;
   if (!shouldFlag) return;
   const previous = order.vapi_change_review_status || "";
   order.has_vapi_changes = true;
   order.vapi_change_review_status = order.vapi_change_review_status && order.vapi_change_review_status !== "Reviewed" ? order.vapi_change_review_status : "Pending Review";
-  order.vapi_change_summary = note.change_summary || "";
+  order.vapi_change_summary = note.change_summary || note.purchase_order_note || "";
   order.vapi_change_detected_at = new Date().toISOString();
   order.vapi_change_call_id = callId || "";
   if (note) note.change_review_status = order.vapi_change_review_status;
+  if (note?.purchase_order_number_changed && note.purchase_order_number_new) {
+    if (!Array.isArray(order.customerChangeRequests)) order.customerChangeRequests = [];
+    const changeId = `PO-${callId || Date.now()}`;
+    const existingChange = order.customerChangeRequests.find((change) => change.id === changeId || (change.field === "purchase_order_number" && change.vapi_call_id === callId));
+    const change = {
+      id: existingChange?.id || changeId,
+      order_id: order.id,
+      field: "purchase_order_number",
+      label: "Purchase Order Number",
+      current_value: note.purchase_order_number_old || purchaseOrderNumber(order),
+      customer_value: note.purchase_order_number_new || "",
+      status: existingChange?.status || "Pending Review",
+      vapi_call_id: callId || "",
+      created_at: existingChange?.created_at || new Date().toISOString(),
+      summary: note.purchase_order_note || note.change_summary || "",
+    };
+    if (existingChange) Object.assign(existingChange, change);
+    else order.customerChangeRequests.push(change);
+  }
   addAuditEntry(sharedState, {
     action: "Order flagged for customer change",
     order_number: order.id,
@@ -1211,6 +1278,10 @@ function promoNumber(order = {}, customer = {}) {
   return order.promoTicket?.promoNumber || order.promoNumber || customer.promoNumber || "";
 }
 
+function purchaseOrderNumber(order = {}, customer = {}) {
+  return String(order.purchase_order_number || order.purchaseOrderNumber || order.purchaseOrder || customer.purchaseOrder || "").trim();
+}
+
 function creditCardOnFile(order = {}) {
   return Boolean(order.creditCardOnFile || order.creditCard?.name || order.creditCard?.last4 || order.creditCard?.expiration) ? "Yes" : "";
 }
@@ -1238,7 +1309,7 @@ function buildVapiVariableValues(requestBody) {
     line_total_details: lineTotalDetailsSentence(items),
     account_number: order.accountNumber || "",
     account_status: order.accountStatus || "",
-    purchase_order_number: order.purchaseOrder || customer.purchaseOrder || "",
+    purchase_order_number: purchaseOrderNumber(order, customer),
     billing_address: billingAddress(order),
     tracking_number: order.trackingInfo || order.trackingNumber || "",
     promo_number: promoNumber(order, customer),
@@ -1343,6 +1414,8 @@ const server = createServer(async (request, response) => {
         },
         metadata: {
           orderId,
+          order_number: orderId,
+          purchase_order_number: variableValues.purchase_order_number || "",
           source: "allied-erp",
         },
       };

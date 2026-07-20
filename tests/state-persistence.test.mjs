@@ -11,6 +11,7 @@ let dataDir;
 let vapiServer;
 let vapiPort;
 const vapiCallResponses = new Map();
+const vapiPostedCalls = [];
 
 function listen(server) {
   return new Promise((resolve) => {
@@ -65,6 +66,16 @@ async function waitForOrder(orderId, predicate, timeoutMs = 1000) {
 
 async function postVapiWebhook(body) {
   const response = await fetch(`http://127.0.0.1:${appPort}/api/vapi/webhook`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) assert.fail(await response.text());
+  return response.json();
+}
+
+async function postVapiCall(body) {
+  const response = await fetch(`http://127.0.0.1:${appPort}/api/vapi/calls`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -181,6 +192,20 @@ function completedVapiCall({ callId, orderId, result, name = "ERP_Order_Verifica
 before(async () => {
   const { createServer } = await import("node:http");
   vapiServer = createServer((request, response) => {
+    if (request.method === "POST") {
+      let body = "";
+      request.setEncoding("utf8");
+      request.on("data", (chunk) => {
+        body += chunk;
+      });
+      request.on("end", () => {
+        const payload = body ? JSON.parse(body) : {};
+        vapiPostedCalls.push(payload);
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.end(JSON.stringify({ id: `call_post_${vapiPostedCalls.length}`, status: "queued" }));
+      });
+      return;
+    }
     const callId = new URL(request.url, "http://127.0.0.1").pathname.split("/").filter(Boolean).at(-1);
     const responses = vapiCallResponses.get(callId) || [];
     const payload = responses.length > 1 ? responses.shift() : responses[0];
@@ -199,6 +224,8 @@ before(async () => {
       PORT: String(appPort),
       ALLIED_ERP_DATA_DIR: dataDir,
       VAPI_API_KEY: "test-key",
+      VAPI_ASSISTANT_ID: "asst_test",
+      VAPI_PHONE_NUMBER_ID: "phone_test",
       VAPI_API_URL: `http://127.0.0.1:${vapiPort}/call`,
       VAPI_STRUCTURED_OUTPUT_RETRY_DELAYS_MS: "10,20,30",
       VAPI_RETRY_WORKER_INTERVAL_MS: "5",
@@ -319,6 +346,56 @@ test("sent to shipping status is not overwritten by a stale verified order copy"
   assert.equal(order.statusHistory.some((entry) => entry.status === "sent_to_shipping"), true);
 });
 
+test("sales orders persist optional purchase order numbers", async () => {
+  await postState({
+    orders: [
+      { id: "SO-PO-WITH", customerId: "C-PO", rep: "Jordan Lee", purchase_order_number: "PO-45821", status: "pending" },
+      { id: "SO-PO-WITHOUT", customerId: "C-PO", rep: "Jordan Lee", status: "pending" },
+    ],
+  });
+
+  let state = await getState();
+  assert.equal(state.orders.find((item) => item.id === "SO-PO-WITH").purchase_order_number, "PO-45821");
+  assert.equal(state.orders.find((item) => item.id === "SO-PO-WITHOUT").purchase_order_number, "");
+
+  await postState({
+    orders: [{ id: "SO-PO-WITH", customerId: "C-PO", rep: "Jordan Lee", purchase_order_number: "PO-99999", status: "pending" }],
+  });
+
+  state = await getState();
+  assert.equal(state.orders.find((item) => item.id === "SO-PO-WITH").purchase_order_number, "PO-99999");
+});
+
+test("Vapi outbound call receives purchase_order_number safely", async () => {
+  vapiPostedCalls.length = 0;
+  await postVapiCall({
+    orderId: "SO-PO-VAPI",
+    customerPhoneNumber: "951-555-1234",
+    order: {
+      order: {
+        id: "SO-PO-VAPI",
+        buyerName: "Mia Turner",
+        customer: { name: "Baxter Machine Works", contact: "Mia Turner" },
+        salesRep: "Jordan Lee",
+        date: "2026-07-20",
+        address: { address: "1420 Foundry Park Dr", city: "Cleveland", state: "OH", zip: "44114" },
+        total: 125,
+        purchase_order_number: "PO-45821",
+        items: [{ name: "2 inch packing tape", orderedQty: 5, unitPrice: 25 }],
+      },
+    },
+  });
+  await postVapiCall({
+    orderId: "SO-PO-EMPTY",
+    customerPhoneNumber: "951-555-1234",
+    order: { order: { id: "SO-PO-EMPTY", customer: {}, items: [] } },
+  });
+
+  assert.equal(vapiPostedCalls[0].assistantOverrides.variableValues.purchase_order_number, "PO-45821");
+  assert.equal(vapiPostedCalls[0].metadata.purchase_order_number, "PO-45821");
+  assert.equal(vapiPostedCalls[1].assistantOverrides.variableValues.purchase_order_number, "");
+});
+
 test("Vapi verified webhook updates order once and ignores duplicates", async () => {
   await postState({
     orders: [{
@@ -407,6 +484,79 @@ test("Vapi webhook reads ERP_Order_Verification structuredOutputs result", async
   assert.equal(order.vapi_change_summary, "Customer requested an updated ship date.");
   assert.equal(state.auditLog.some((entry) => entry.action === "Vapi note imported" && entry.order_number === "SO-VAPI-STRUCTURED"), true);
   assert.equal(state.auditLog.some((entry) => entry.action === "Order flagged for customer change" && entry.order_number === "SO-VAPI-STRUCTURED"), true);
+});
+
+test("Vapi PO correction creates a pending customer change request without overwriting order", async () => {
+  await postState({
+    orders: [{
+      id: "SO-VAPI-PO-CORRECT",
+      customerId: "C-VAPI",
+      rep: "Jordan Lee",
+      status: "verification_in_progress",
+      purchase_order_number: "PO-45812",
+      verification: { vapiCallId: "call_po_correct_1", state: "verification_in_progress", method: "Assistant" },
+    }],
+  });
+
+  await postVapiWebhook(vapiStructuredOutputWebhook({
+    callId: "call_po_correct_1",
+    orderId: "SO-VAPI-PO-CORRECT",
+    transcript: "Buyer said the correct purchase order number is PO-45821.",
+    result: {
+      verification_outcome: "VERIFIED",
+      summary: "Buyer confirmed the order and corrected the PO number.",
+      changes_reported: true,
+      change_summary: "Purchase Order Number corrected from PO-45812 to PO-45821.",
+      purchase_order_number_changed: true,
+      purchase_order_number_old: "PO-45812",
+      purchase_order_number_new: "PO-45821",
+    },
+  }));
+
+  const state = await getState();
+  const order = state.orders.find((item) => item.id === "SO-VAPI-PO-CORRECT");
+  assert.equal(order.purchase_order_number, "PO-45812");
+  assert.equal(order.has_vapi_changes, true);
+  assert.equal(order.customerChangeRequests.length, 1);
+  assert.equal(order.customerChangeRequests[0].field, "purchase_order_number");
+  assert.equal(order.customerChangeRequests[0].current_value, "PO-45812");
+  assert.equal(order.customerChangeRequests[0].customer_value, "PO-45821");
+  assert.equal(order.customerChangeRequests[0].status, "Pending Review");
+  assert.equal(order.vapiNotes[0].purchase_order_number_changed, true);
+  assert.match(order.vapiNotes[0].purchase_order_note, /PO-45821/);
+});
+
+test("Vapi PO confirmation is saved in notes without flagging a correction", async () => {
+  await postState({
+    orders: [{
+      id: "SO-VAPI-PO-CONFIRM",
+      customerId: "C-VAPI",
+      rep: "Jordan Lee",
+      status: "verification_in_progress",
+      purchase_order_number: "PO-45821",
+      verification: { vapiCallId: "call_po_confirm_1", state: "verification_in_progress", method: "Assistant" },
+    }],
+  });
+
+  await postVapiWebhook(vapiStructuredOutputWebhook({
+    callId: "call_po_confirm_1",
+    orderId: "SO-VAPI-PO-CONFIRM",
+    result: {
+      verification_outcome: "VERIFIED",
+      summary: "Buyer confirmed the order and PO number.",
+      changes_reported: false,
+      change_summary: "No customer information changes reported.",
+      purchase_order_number_changed: false,
+      purchase_order_number_old: "PO-45821",
+      purchase_order_number_new: "",
+    },
+  }));
+
+  const state = await getState();
+  const order = state.orders.find((item) => item.id === "SO-VAPI-PO-CONFIRM");
+  assert.equal(order.has_vapi_changes, undefined);
+  assert.equal(order.customerChangeRequests, undefined);
+  assert.equal(order.vapiNotes[0].purchase_order_note, "Purchase Order Number confirmed: PO-45821.");
 });
 
 test("Vapi status-update in-progress keeps the order calling without finalizing", async () => {
