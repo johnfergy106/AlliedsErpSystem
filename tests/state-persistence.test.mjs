@@ -76,6 +76,32 @@ function vapiWebhook({ callId, orderId, outcome, transcript, endedReason = "cust
   };
 }
 
+function vapiStructuredOutputWebhook({ callId, orderId, result, transcript = "" }) {
+  return {
+    type: "end-of-call-report",
+    call: {
+      id: callId,
+      assistantId: "asst_test",
+      assistant: { name: "Allied Verification Assistant" },
+      status: "ended",
+      endedReason: "customer-ended-call",
+      customer: { number: "+19515551234" },
+      startedAt: "2026-07-17T15:00:00.000Z",
+      endedAt: "2026-07-17T15:02:15.000Z",
+      transcript,
+      structuredOutputs: {
+        out_erp_verification: {
+          name: "ERP_Order_Verification",
+          result: {
+            order_number: orderId,
+            ...result,
+          },
+        },
+      },
+    },
+  };
+}
+
 before(async () => {
   const { createServer } = await import("node:http");
   const portServer = createServer();
@@ -242,6 +268,42 @@ test("Vapi verified webhook updates order once and ignores duplicates", async ()
   assert.equal(order.statusHistory.filter((entry) => entry.status === "verified").length, 1);
 });
 
+test("Vapi webhook reads ERP_Order_Verification structuredOutputs result", async () => {
+  await postState({
+    orders: [{
+      id: "SO-VAPI-STRUCTURED",
+      customerId: "C-VAPI",
+      rep: "Jordan Lee",
+      status: "verification_in_progress",
+      verification: { vapiCallId: "call_structured_1", state: "verification_in_progress", method: "Assistant" },
+    }],
+  });
+
+  const result = await postVapiWebhook(vapiStructuredOutputWebhook({
+    callId: "call_structured_1",
+    orderId: "SO-VAPI-STRUCTURED",
+    transcript: "Buyer confirmed the order and reported the ship date changed.",
+    result: {
+      verification_outcome: "VERIFIED",
+      summary: "Buyer confirmed the order.",
+      callback_notes: "",
+      cancellation_reason: "",
+      changes_reported: true,
+      change_summary: "Customer requested an updated ship date.",
+    },
+  }));
+
+  assert.equal(result.outcome, "VERIFIED");
+  const state = await getState();
+  const order = state.orders.find((item) => item.id === "SO-VAPI-STRUCTURED");
+  assert.equal(order.status, "verified");
+  assert.equal(order.verification.state, "verified");
+  assert.equal(order.verification.summary, "Buyer confirmed the order.");
+  assert.equal(order.verification.changeSummary, "Customer requested an updated ship date.");
+  assert.equal(order.verification.changesReported, "true");
+  assert.equal(order.verificationHistory.at(-1).summary, "Buyer confirmed the order.");
+});
+
 test("Vapi cancelled webhook cancels the order", async () => {
   await postState({
     orders: [{ id: "SO-VAPI-CANCEL", customerId: "C-VAPI", rep: "Jordan Lee", status: "verification_in_progress" }],
@@ -374,4 +436,32 @@ test("Vapi webhook falls back to transcript when structured output is missing", 
   assert.equal(order.status, "verified");
   assert.equal(order.verification.state, "verified");
   assert.equal(order.verificationHistory.at(-1).outcome, "VERIFIED");
+});
+
+test("Vapi incomplete structured output becomes needs review", async () => {
+  await postState({
+    orders: [{
+      id: "SO-VAPI-INCOMPLETE",
+      customerId: "C-VAPI",
+      rep: "Jordan Lee",
+      status: "verification_in_progress",
+      verification: { vapiCallId: "call_incomplete_1", state: "verification_in_progress", method: "Assistant" },
+    }],
+  });
+
+  await postVapiWebhook(vapiStructuredOutputWebhook({
+    callId: "call_incomplete_1",
+    orderId: "SO-VAPI-INCOMPLETE",
+    result: {
+      verification_outcome: "INCOMPLETE",
+      summary: "Buyer did not complete verification.",
+    },
+  }));
+
+  const state = await getState();
+  const order = state.orders.find((item) => item.id === "SO-VAPI-INCOMPLETE");
+  assert.equal(order.status, "verification_in_progress");
+  assert.equal(order.verification.state, "needs_review");
+  assert.equal(order.verification.summary, "Buyer did not complete verification.");
+  assert.equal(order.verificationHistory.at(-1).outcome, "INCOMPLETE");
 });

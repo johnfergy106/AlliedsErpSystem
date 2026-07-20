@@ -274,8 +274,25 @@ function extractVapiAnalysis(message) {
   return call.analysis || message?.message?.analysis || message?.analysis || message?.data?.analysis || {};
 }
 
+function extractStructuredOutputs(message) {
+  const call = extractVapiCall(message);
+  return call.structuredOutputs || message?.message?.structuredOutputs || message?.structuredOutputs || message?.data?.structuredOutputs || {};
+}
+
+function findErpStructuredOutput(message) {
+  const outputs = extractStructuredOutputs(message);
+  const values = Array.isArray(outputs) ? outputs : Object.values(outputs || {});
+  return values.find((item) => item?.name === "ERP_Order_Verification") || null;
+}
+
 function extractStructuredData(analysis = {}) {
   return analysis.structuredData || analysis.structured || analysis.data || analysis || {};
+}
+
+function extractVapiStructuredResult(message) {
+  const structuredOutput = findErpStructuredOutput(message);
+  if (structuredOutput?.result && typeof structuredOutput.result === "object") return structuredOutput.result;
+  return extractStructuredData(extractVapiAnalysis(message));
 }
 
 function extractVapiTranscript(message) {
@@ -306,7 +323,8 @@ function extractVapiAssistantId(message) {
 function extractVapiOrderId(message) {
   const call = extractVapiCall(message);
   const variables = call.assistantOverrides?.variableValues || message?.message?.assistantOverrides?.variableValues || {};
-  return String(call.metadata?.orderId || message?.metadata?.orderId || message?.message?.metadata?.orderId || message?.orderId || variables.order_number || "").trim();
+  const structured = extractVapiStructuredResult(message);
+  return String(call.metadata?.orderId || message?.metadata?.orderId || message?.message?.metadata?.orderId || message?.orderId || structured.order_number || variables.order_number || "").trim();
 }
 
 function extractVapiDuration(message) {
@@ -320,7 +338,7 @@ function extractVapiDuration(message) {
 }
 
 function extractStructuredOutcome(analysis = {}) {
-  const structured = extractStructuredData(analysis);
+  const structured = analysis;
   const candidates = [
     structured?.verification_outcome,
     structured?.verificationOutcome,
@@ -338,11 +356,13 @@ function classifyVapiOutcome(message) {
   const type = String(message?.message?.type || message?.type || "").toLowerCase();
   const status = String(call.status || message?.status || "").toLowerCase();
   const endReason = extractVapiEndReason(message).toLowerCase();
-  const analysis = extractVapiAnalysis(message);
-  const structuredOutcome = extractStructuredOutcome(analysis);
+  const structured = extractVapiStructuredResult(message);
+  const structuredOutcome = extractStructuredOutcome(structured);
   const transcript = extractVapiTranscript(message).toLowerCase();
   const haystack = [structuredOutcome, status, endReason, transcript].join(" ");
 
+  if (structuredOutcome === "incomplete") return "INCOMPLETE";
+  if (structuredOutcome === "unknown") return "UNKNOWN";
   if (/(failed|failure|error|errored|system-error|assistant-error|phone-call-provider-error)/i.test(haystack)) return "FAILED";
   if (/(voicemail|voice mail|mailbox|left a message|answering machine)/i.test(haystack)) return "VOICEMAIL";
   if (/(no[-_ ]?answer|did not answer|not answered|unanswered|busy|declined|customer-did-not-answer)/i.test(haystack)) return "NO_ANSWER";
@@ -495,7 +515,7 @@ function logVapiWebhookActivity(sharedState, event) {
 }
 
 function structuredText(analysis, ...keys) {
-  const structured = extractStructuredData(analysis);
+  const structured = analysis || {};
   for (const key of keys) {
     const value = structured?.[key];
     if (value !== undefined && value !== null && String(value).trim()) return String(value).trim();
@@ -544,6 +564,7 @@ function outcomeSummary(outcome, transcript = "", analysis = {}) {
   if (outcome === "VOICEMAIL") return "Verification call reached voicemail.";
   if (outcome === "NO_ANSWER") return "Customer did not answer the verification call.";
   if (outcome === "FAILED") return "Vapi verification call failed.";
+  if (outcome === "INCOMPLETE" || outcome === "UNKNOWN") return "Verification needs review.";
   return "Verification outcome could not be determined.";
 }
 
@@ -565,13 +586,15 @@ function updateOrderFromVapiOutcome(order, outcome, details) {
     transcript,
     callDuration: duration,
     customerPhoneNumber: phoneNumber ? maskPhoneNumber(phoneNumber) : "",
+    changeSummary: structuredText(analysis, "change_summary", "changeSummary"),
+    changesReported: structuredText(analysis, "changes_reported", "changesReported"),
   };
 
   if (outcome === "VERIFIED") {
     const statusAt = recordOrderStatus(order, "verified", "Vapi verification call confirmed the order.", "Vapi");
     Object.assign(verification, {
       state: "verified",
-      summary: "Assistant Verification completed successfully.",
+      summary: outcomeSummary(outcome, transcript, analysis),
       at: statusAt,
       verifiedBy: "Vapi",
       verifiedDate: history.date,
@@ -606,8 +629,11 @@ function updateOrderFromVapiOutcome(order, outcome, details) {
   } else if (outcome === "FAILED") {
     verification.state = "failed";
     verification.summary = "Assistant Verification failed. Order status was not changed.";
+  } else if (outcome === "INCOMPLETE" || outcome === "UNKNOWN") {
+    verification.state = "needs_review";
+    verification.summary = outcomeSummary(outcome, transcript, analysis);
   } else {
-    verification.state = "unknown";
+    verification.state = "needs_review";
     verification.summary = endReason ? `Assistant Verification ended with an unknown outcome: ${endReason}.` : "Assistant Verification ended with an unknown outcome.";
   }
 
@@ -948,12 +974,22 @@ const server = createServer(async (request, response) => {
       const assistantId = extractVapiAssistantId(message);
       const transcript = extractVapiTranscript(message);
       const analysis = extractVapiAnalysis(message);
+      const structuredOutputs = extractStructuredOutputs(message);
+      const structuredOutputValues = Array.isArray(structuredOutputs) ? structuredOutputs : Object.values(structuredOutputs || {});
+      const erpStructuredOutput = findErpStructuredOutput(message);
+      const structuredResult = extractVapiStructuredResult(message);
       const endReason = extractVapiEndReason(message);
       const phoneNumber = extractVapiCustomerPhone(message);
       const duration = extractVapiDuration(message);
       const assistantName = extractVapiAssistantName(message);
       const timestamp = call.endedAt || call.updatedAt || call.createdAt || message?.timestamp || message?.message?.timestamp || new Date().toISOString();
       const outcome = classifyVapiOutcome(message);
+      const structuredOutputNames = structuredOutputValues.map((item) => item?.name || "").filter(Boolean);
+      console.log("[vapi-webhook] Webhook received");
+      console.log(`[vapi-webhook] Structured outputs found: ${structuredOutputNames.length}`);
+      structuredOutputNames.forEach((name) => console.log(`[vapi-webhook] Structured output name: ${name}`));
+      console.log(`[vapi-webhook] verification_outcome: ${structuredResult?.verification_outcome || structuredResult?.verificationOutcome || structuredResult?.outcome || "none"}`);
+      if (!erpStructuredOutput) console.log("[vapi-webhook] ERP_Order_Verification not found. structuredOutputs:", JSON.stringify(structuredOutputs, null, 2));
       console.log(`[vapi-webhook] call=${callId || "none"} order=${orderId || "none"} assistant=${assistantId || "none"} outcome=${outcome} phone=${phoneNumber ? maskPhoneNumber(phoneNumber) : "none"}`);
 
       if (!isFinalVapiEvent(message)) {
@@ -980,6 +1016,7 @@ const server = createServer(async (request, response) => {
       });
       const orders = Array.isArray(sharedState.orders) ? sharedState.orders : [];
       const order = orders.find((item) => item.id === orderId || item.verification?.vapiCallId === callId);
+      console.log(`[vapi-webhook] Matched order: ${order?.id || "none"}`);
       if (!order) {
         logVapiManualReview(sharedState, {
           reason: "No matching order number was found.",
@@ -1025,7 +1062,7 @@ const server = createServer(async (request, response) => {
           assistantName,
           timestamp,
           endReason,
-          analysis,
+          analysis: structuredResult,
         });
         logVapiWebhookActivity(sharedState, {
           stage: "status updated",
@@ -1040,6 +1077,7 @@ const server = createServer(async (request, response) => {
         });
         markProcessedCall(sharedState, order, callId);
         await writeSharedStateJson(sharedState);
+        console.log(`[vapi-webhook] Database update successful for order ${order.id}`);
         sendJson(response, 200, { ok: true, orderId: order.id, outcome, status: order.status, verificationHistory: history });
         return;
       }
@@ -1052,7 +1090,7 @@ const server = createServer(async (request, response) => {
         assistantName,
         timestamp,
         endReason,
-        analysis,
+        analysis: structuredResult,
       });
 
       if (outcome === "VERIFIED") {
@@ -1077,6 +1115,7 @@ const server = createServer(async (request, response) => {
         timestamp,
       });
       await writeSharedStateJson(sharedState);
+      console.log(`[vapi-webhook] Database update successful for order ${order.id}`);
       sendJson(response, 200, {
         ok: true,
         orderId: order.id,

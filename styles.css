@@ -523,6 +523,11 @@ tr:last-child td {
   color: #fff;
 }
 
+.status.verification-status.needs_review {
+  background: #fff0c2;
+  color: #8a4f00;
+}
+
 .status-cell {
   display: grid;
   gap: 5px;

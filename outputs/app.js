@@ -889,6 +889,7 @@ function verificationStatusKey(order) {
   if (state === "issue" || order.verification?.outcome === "callback_requested") return "issue";
   if (state === "no_answer") return "no_answer";
   if (state === "failed" || order.status === "issue") return "failed";
+  if (state === "needs_review" || state === "unknown") return "needs_review";
   return "pending";
 }
 
@@ -903,6 +904,7 @@ function verificationStatusLabel(key) {
     callback_requested: "Callback Requested",
     no_answer: "No Answer",
     failed: "Failed",
+    needs_review: "Needs Review",
   }[key] || "Pending";
 }
 
@@ -936,9 +938,11 @@ function recordStatusChange(order, status, notes = "") {
 
 function statusCell(order, options = {}) {
   const showVerificationBadge = options.showVerificationBadge !== false;
+  const verificationKey = verificationStatusKey(order);
+  const replaceInProgressStatus = showVerificationBadge && order.status === "verification_in_progress" && hasAssistantVerification(order) && !["calling", "pending"].includes(verificationKey);
   return `
     <div class="status-cell">
-      ${statusBadge(order.status)}
+      ${replaceInProgressStatus ? "" : statusBadge(order.status)}
       ${showVerificationBadge ? verificationStatusBadge(order) : ""}
       ${statusChangedLabel(order)}
       ${order.status === "verified" && order.verification?.verifiedBy ? `<div class="metric-note">Verified by ${html(order.verification.verifiedBy)}</div>` : ""}
