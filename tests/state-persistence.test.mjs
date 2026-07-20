@@ -57,7 +57,7 @@ async function postVapiWebhook(body) {
   return response.json();
 }
 
-function vapiWebhook({ callId, orderId, outcome, transcript, endedReason = "customer-ended-call", status = "ended" }) {
+function vapiWebhook({ callId, orderId, outcome, transcript, endedReason = "customer-ended-call", status = "ended", structuredData = null }) {
   return {
     type: "end-of-call-report",
     call: {
@@ -71,7 +71,7 @@ function vapiWebhook({ callId, orderId, outcome, transcript, endedReason = "cust
       startedAt: "2026-07-17T15:00:00.000Z",
       endedAt: "2026-07-17T15:02:15.000Z",
       transcript,
-      analysis: { structuredData: { outcome } },
+      analysis: structuredData === null ? { structuredData: { outcome } } : { structuredData },
     },
   };
 }
@@ -259,7 +259,37 @@ test("Vapi cancelled webhook cancels the order", async () => {
   assert.equal(order.status, "cancelled");
   assert.equal(order.verification.state, "cancelled");
   assert.equal(order.verification.cancellationDate.length > 0, true);
+  assert.equal(order.verification.cancelledBy, "Customer");
+  assert.equal(order.verification.cancellationNotes, "Other");
   assert.equal(order.verificationHistory.at(-1).outcome, "CANCELLED");
+});
+
+test("Vapi callback-requested webhook stores issue verification and callback notes", async () => {
+  await postState({
+    orders: [{ id: "SO-VAPI-CALLBACK", customerId: "C-VAPI", rep: "Jordan Lee", status: "verification_in_progress" }],
+  });
+
+  await postVapiWebhook(vapiWebhook({
+    callId: "call_callback_1",
+    orderId: "SO-VAPI-CALLBACK",
+    outcome: "CALLBACK_REQUESTED",
+    transcript: "The buyer said call back next week after they get manager approval.",
+    structuredData: {
+      verification_outcome: "CALLBACK_REQUESTED",
+      callback_requested: true,
+      callback_notes: "Call back next week",
+      summary: "Buyer requested a callback next week.",
+      verified: false,
+    },
+  }));
+
+  const state = await getState();
+  const order = state.orders.find((item) => item.id === "SO-VAPI-CALLBACK");
+  assert.equal(order.status, "verification_in_progress");
+  assert.equal(order.verification.state, "issue");
+  assert.equal(order.verification.outcome, "callback_requested");
+  assert.equal(order.verification.callbackNotes, "Call back next week");
+  assert.equal(order.verificationHistory.at(-1).summary, "Buyer requested a callback next week.");
 });
 
 test("Vapi voicemail and no-answer webhooks do not change order status", async () => {
@@ -290,7 +320,7 @@ test("Vapi voicemail and no-answer webhooks do not change order status", async (
   assert.deepEqual(order.verificationHistory.map((entry) => entry.outcome), ["VOICEMAIL", "NO_ANSWER"]);
 });
 
-test("Vapi failed webhook is logged without modifying the order", async () => {
+test("Vapi failed webhook is logged without moving the order status", async () => {
   await postState({
     orders: [{ id: "SO-VAPI-FAILED", customerId: "C-VAPI", rep: "Jordan Lee", status: "verification_in_progress" }],
   });
@@ -307,7 +337,8 @@ test("Vapi failed webhook is logged without modifying the order", async () => {
   const state = await getState();
   const order = state.orders.find((item) => item.id === "SO-VAPI-FAILED");
   assert.equal(order.status, "verification_in_progress");
-  assert.equal(order.verification, undefined);
+  assert.equal(order.verification.state, "failed");
+  assert.equal(order.verificationHistory.at(-1).outcome, "FAILED");
   assert.equal(Array.isArray(state.vapiWebhookFailures), true);
   assert.equal(state.vapiWebhookFailures.at(-1).callId, "call_failed_1");
 });
@@ -323,4 +354,24 @@ test("Vapi webhook without matching order is logged for manual review", async ()
   const state = await getState();
   assert.equal(Array.isArray(state.vapiWebhookManualReview), true);
   assert.equal(state.vapiWebhookManualReview.at(-1).orderId, "SO-NOT-FOUND");
+});
+
+test("Vapi webhook falls back to transcript when structured output is missing", async () => {
+  await postState({
+    orders: [{ id: "SO-VAPI-FALLBACK", customerId: "C-VAPI", rep: "Jordan Lee", status: "verification_in_progress" }],
+  });
+
+  await postVapiWebhook(vapiWebhook({
+    callId: "call_fallback_1",
+    orderId: "SO-VAPI-FALLBACK",
+    outcome: "",
+    transcript: "Yes, this order is confirmed and correct. Please ship it.",
+    structuredData: {},
+  }));
+
+  const state = await getState();
+  const order = state.orders.find((item) => item.id === "SO-VAPI-FALLBACK");
+  assert.equal(order.status, "verified");
+  assert.equal(order.verification.state, "verified");
+  assert.equal(order.verificationHistory.at(-1).outcome, "VERIFIED");
 });

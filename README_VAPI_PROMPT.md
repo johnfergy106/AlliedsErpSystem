@@ -76,4 +76,28 @@ FAILED
 UNKNOWN
 ```
 
+Configure the assistant's structured output to return exactly this JSON shape on every completed call:
+
+```json
+{
+  "order_number": "",
+  "verification_outcome": "VERIFIED",
+  "buyer_reached": true,
+  "callback_requested": false,
+  "cancellation_reason": "",
+  "callback_notes": "",
+  "summary": "",
+  "verified": true
+}
+```
+
+Rules for structured output:
+
+- `verification_outcome` must contain exactly one final value.
+- Use `VERIFIED` only when the buyer confirms the order is correct.
+- Use `CANCELLED` when the buyer cancels or says not to ship the order.
+- Use `CALLBACK_REQUESTED` when the buyer asks to be called later or needs approval, revised pricing, freight quote, or PO information first.
+- Keep `cancellation_reason`, `callback_notes`, and `summary` short and human-readable.
+- Never include API keys, internal IDs, or credit card details in structured output.
+
 The ERP uses the webhook and structured analysis to update order status. The prompt alone should not be treated as the source of truth.

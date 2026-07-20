@@ -274,6 +274,10 @@ function extractVapiAnalysis(message) {
   return call.analysis || message?.message?.analysis || message?.analysis || message?.data?.analysis || {};
 }
 
+function extractStructuredData(analysis = {}) {
+  return analysis.structuredData || analysis.structured || analysis.data || analysis || {};
+}
+
 function extractVapiTranscript(message) {
   const call = extractVapiCall(message);
   return String(call.transcript || call.artifact?.transcript || message?.message?.transcript || message?.transcript || message?.artifact?.transcript || "");
@@ -316,11 +320,11 @@ function extractVapiDuration(message) {
 }
 
 function extractStructuredOutcome(analysis = {}) {
-  const structured = analysis.structuredData || analysis.structured || analysis.data || analysis;
+  const structured = extractStructuredData(analysis);
   const candidates = [
-    structured?.outcome,
     structured?.verification_outcome,
     structured?.verificationOutcome,
+    structured?.outcome,
     structured?.order_status,
     structured?.orderStatus,
     structured?.result,
@@ -440,6 +444,8 @@ function verificationHistoryRecord({ outcome, callId, transcript, duration, phon
     outcome,
     callId: callId || "",
     transcript: transcript || "",
+    summary: "",
+    user: assistantName || "Vapi",
     duration: duration || "",
     phoneNumber: phoneNumber ? maskPhoneNumber(phoneNumber) : "",
     assistantName: assistantName || "",
@@ -481,9 +487,71 @@ function logVapiFailure(sharedState, event) {
   console.error(`[vapi-webhook] failed call=${event.callId || "none"} order=${event.orderId || "none"} reason=${event.endReason || "unknown"}`);
 }
 
+function logVapiWebhookActivity(sharedState, event) {
+  if (!Array.isArray(sharedState.vapiWebhookLog)) sharedState.vapiWebhookLog = [];
+  sharedState.vapiWebhookLog.push({ ...event, loggedAt: new Date().toISOString() });
+  if (sharedState.vapiWebhookLog.length > 200) sharedState.vapiWebhookLog = sharedState.vapiWebhookLog.slice(-200);
+  console.log(`[vapi-webhook-log] ${event.stage || "event"} call=${event.callId || "none"} order=${event.orderId || "none"} outcome=${event.outcome || "none"} matched=${event.orderMatched ? "yes" : "no"}`);
+}
+
+function structuredText(analysis, ...keys) {
+  const structured = extractStructuredData(analysis);
+  for (const key of keys) {
+    const value = structured?.[key];
+    if (value !== undefined && value !== null && String(value).trim()) return String(value).trim();
+  }
+  return "";
+}
+
+function conciseCancellationReason(transcript = "", analysis = {}) {
+  const structured = structuredText(analysis, "cancellation_reason", "cancellationReason", "reason");
+  if (structured) return structured.slice(0, 160);
+  const text = String(transcript || "").toLowerCase();
+  const rules = [
+    [/price|too expensive|cost|quote/, "Price too high"],
+    [/ordered elsewhere|bought elsewhere|another vendor/, "Ordered elsewhere"],
+    [/duplicate/, "Duplicate order"],
+    [/wrong item|incorrect item|not the right item/, "Wrong item ordered"],
+    [/manager approval|approval/, "Need manager approval"],
+    [/budget/, "Budget issue"],
+    [/shipping.*expensive|freight.*expensive/, "Shipping too expensive"],
+    [/do not need|don't need|doesn't need|no longer need/, "Customer doesn't need order"],
+  ];
+  return rules.find(([pattern]) => pattern.test(text))?.[1] || "Other";
+}
+
+function conciseCallbackNotes(transcript = "", analysis = {}) {
+  const structured = structuredText(analysis, "callback_notes", "callbackNotes", "summary");
+  if (structured) return structured.slice(0, 160);
+  const text = String(transcript || "").toLowerCase();
+  const rules = [
+    [/next week/, "Call back next week"],
+    [/revised pricing|better price|new price/, "Needs revised pricing"],
+    [/freight quote|shipping quote/, "Needs freight quote"],
+    [/manager approval|approval/, "Needs manager approval"],
+    [/waiting on po|purchase order|po number/, "Waiting on PO"],
+    [/one month|next month/, "Call back in one month"],
+  ];
+  return rules.find(([pattern]) => pattern.test(text))?.[1] || "Customer requested callback";
+}
+
+function outcomeSummary(outcome, transcript = "", analysis = {}) {
+  const structured = structuredText(analysis, "summary");
+  if (structured) return structured.slice(0, 220);
+  if (outcome === "CANCELLED") return conciseCancellationReason(transcript, analysis);
+  if (outcome === "CALLBACK_REQUESTED") return conciseCallbackNotes(transcript, analysis);
+  if (outcome === "VERIFIED") return "Customer verified the sales order.";
+  if (outcome === "VOICEMAIL") return "Verification call reached voicemail.";
+  if (outcome === "NO_ANSWER") return "Customer did not answer the verification call.";
+  if (outcome === "FAILED") return "Vapi verification call failed.";
+  return "Verification outcome could not be determined.";
+}
+
 function updateOrderFromVapiOutcome(order, outcome, details) {
-  const { callId, transcript, duration, phoneNumber, assistantName, timestamp, endReason } = details;
+  const { callId, transcript, duration, phoneNumber, assistantName, timestamp, endReason, analysis } = details;
   const history = verificationHistoryRecord({ outcome, callId, transcript, duration, phoneNumber, assistantName, timestamp });
+  history.summary = outcomeSummary(outcome, transcript, analysis);
+  history.user = assistantName || "Vapi";
   const at = `${history.date}, ${history.time}`;
   const verification = {
     ...(order.verification || {}),
@@ -511,12 +579,15 @@ function updateOrderFromVapiOutcome(order, outcome, details) {
     });
   } else if (outcome === "CANCELLED") {
     const statusAt = recordOrderStatus(order, "cancelled", "Customer cancelled the order during Vapi verification.", "Vapi");
+    const cancellationNotes = conciseCancellationReason(transcript, analysis);
     Object.assign(verification, {
       state: "cancelled",
       summary: "Customer cancelled the order during Assistant Verification.",
       at: statusAt,
       verifiedBy: "Vapi",
       cancellationDate: history.date,
+      cancelledBy: "Customer",
+      cancellationNotes,
     });
   } else if (outcome === "VOICEMAIL") {
     verification.state = "voicemail";
@@ -527,8 +598,14 @@ function updateOrderFromVapiOutcome(order, outcome, details) {
     verification.attempts = Number(verification.attempts || order.verificationAttempts || 0) + 1;
     order.verificationAttempts = verification.attempts;
   } else if (outcome === "CALLBACK_REQUESTED") {
-    verification.state = "callback_requested";
+    const callbackNotes = conciseCallbackNotes(transcript, analysis);
+    verification.state = "issue";
+    verification.outcome = "callback_requested";
     verification.summary = "Customer requested a callback during Assistant Verification. Order status was not changed.";
+    verification.callbackNotes = callbackNotes;
+  } else if (outcome === "FAILED") {
+    verification.state = "failed";
+    verification.summary = "Assistant Verification failed. Order status was not changed.";
   } else {
     verification.state = "unknown";
     verification.summary = endReason ? `Assistant Verification ended with an unknown outcome: ${endReason}.` : "Assistant Verification ended with an unknown outcome.";
@@ -890,6 +967,17 @@ const server = createServer(async (request, response) => {
       }
 
       const sharedState = await readSharedStateJson();
+      logVapiWebhookActivity(sharedState, {
+        stage: "incoming webhook",
+        callId,
+        orderId,
+        assistantId,
+        outcome,
+        endReason,
+        phoneNumber: phoneNumber ? maskPhoneNumber(phoneNumber) : "",
+        orderMatched: false,
+        timestamp,
+      });
       const orders = Array.isArray(sharedState.orders) ? sharedState.orders : [];
       const order = orders.find((item) => item.id === orderId || item.verification?.vapiCallId === callId);
       if (!order) {
@@ -929,9 +1017,30 @@ const server = createServer(async (request, response) => {
           phoneNumber: phoneNumber ? maskPhoneNumber(phoneNumber) : "",
           timestamp,
         });
-        markProcessedCall(sharedState, null, callId);
+        const history = updateOrderFromVapiOutcome(order, outcome, {
+          callId,
+          transcript,
+          duration,
+          phoneNumber,
+          assistantName,
+          timestamp,
+          endReason,
+          analysis,
+        });
+        logVapiWebhookActivity(sharedState, {
+          stage: "status updated",
+          callId,
+          orderId: order.id,
+          assistantId,
+          outcome,
+          orderMatched: true,
+          status: order.status,
+          verificationState: order.verification?.state || "",
+          timestamp,
+        });
+        markProcessedCall(sharedState, order, callId);
         await writeSharedStateJson(sharedState);
-        sendJson(response, 200, { ok: true, orderId: order.id, outcome, modified: false });
+        sendJson(response, 200, { ok: true, orderId: order.id, outcome, status: order.status, verificationHistory: history });
         return;
       }
 
@@ -956,6 +1065,17 @@ const server = createServer(async (request, response) => {
       }
 
       markProcessedCall(sharedState, order, callId);
+      logVapiWebhookActivity(sharedState, {
+        stage: "status updated",
+        callId,
+        orderId: order.id,
+        assistantId,
+        outcome,
+        orderMatched: true,
+        status: order.status,
+        verificationState: order.verification?.state || "",
+        timestamp,
+      });
       await writeSharedStateJson(sharedState);
       sendJson(response, 200, {
         ok: true,

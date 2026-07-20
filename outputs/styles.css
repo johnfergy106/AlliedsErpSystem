@@ -479,33 +479,48 @@ tr:last-child td {
 }
 
 .status.verification-status.pending {
-  background: #eef2f6;
-  color: #52606d;
+  background: #eaf5ff;
+  color: #0b5f8f;
 }
 
 .status.verification-status.calling {
-  background: #e7e2fb;
-  color: #4d3192;
-}
-
-.status.verification-status.voicemail {
   background: #fff3d8;
   color: #76520b;
 }
 
+.status.verification-status.verified {
+  background: #ddf3e2;
+  color: var(--ok);
+}
+
+.status.verification-status.cancelled {
+  background: #fde4e1;
+  color: var(--danger);
+}
+
+.status.verification-status.issue {
+  background: #fff0c2;
+  color: #8a4f00;
+}
+
+.status.verification-status.voicemail {
+  background: #eef2f6;
+  color: #52606d;
+}
+
 .status.verification-status.callback_requested {
-  background: #edf0ff;
-  color: #354a9f;
+  background: #fff0c2;
+  color: #8a4f00;
 }
 
 .status.verification-status.no_answer {
-  background: #f0e5e2;
-  color: #7a2e22;
+  background: #eef2f6;
+  color: #52606d;
 }
 
 .status.verification-status.failed {
-  background: #fde4e1;
-  color: var(--danger);
+  background: #621b16;
+  color: #fff;
 }
 
 .status-cell {

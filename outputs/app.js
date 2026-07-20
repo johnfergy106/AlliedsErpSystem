@@ -876,8 +876,9 @@ function verificationStatusKey(order) {
   if (order.status === "cancelled" || state === "cancelled") return "cancelled";
   if (state === "voicemail") return "voicemail";
   if (state === "callback_requested") return "callback_requested";
+  if (state === "issue" || order.verification?.outcome === "callback_requested") return "issue";
   if (state === "no_answer") return "no_answer";
-  if (state === "failed" || state === "issue" || order.status === "issue") return "failed";
+  if (state === "failed" || order.status === "issue") return "failed";
   return "pending";
 }
 
@@ -887,6 +888,7 @@ function verificationStatusLabel(key) {
     calling: "Calling",
     verified: "Verified",
     cancelled: "Cancelled",
+    issue: "Issue",
     voicemail: "Voicemail",
     callback_requested: "Callback Requested",
     no_answer: "No Answer",
@@ -1515,7 +1517,8 @@ function verificationRecordHtml(order) {
       <td>${html(entry.callId || "")}</td>
       <td>${html(entry.duration || "")}</td>
       <td>${html(entry.phoneNumber || "")}</td>
-      <td>${html(entry.assistantName || "")}</td>
+      <td>${html(entry.summary || "")}</td>
+      <td>${html(entry.user || entry.assistantName || "")}</td>
     </tr>
     ${entry.transcript ? `<tr><td colspan="6"><strong>Transcript:</strong> <span class="muted">${html(entry.transcript)}</span></td></tr>` : ""}
   `).join("");
@@ -1565,7 +1568,7 @@ function verificationRecordHtml(order) {
         <h2>Verification Notes</h2>
         <div class="muted">${html(order.verification?.summary || "No verification notes recorded.")}</div>
       </section>
-      ${historyRows ? `<section class="box"><h2>Verification History</h2><table><thead><tr><th>Date/Time</th><th>Outcome</th><th>Call ID</th><th>Duration</th><th>Phone</th><th>Assistant</th></tr></thead><tbody>${historyRows}</tbody></table></section>` : ""}
+      ${historyRows ? `<section class="box"><h2>Verification History</h2><table><thead><tr><th>Date/Time</th><th>Outcome</th><th>Call ID</th><th>Duration</th><th>Phone</th><th>Summary</th><th>User</th></tr></thead><tbody>${historyRows}</tbody></table></section>` : ""}
       ${order.verification?.kickbackNotes || order.kickbackNotes ? `<section class="box"><h2>Kickback Notes</h2><div class="muted">${html(order.verification?.kickbackNotes || order.kickbackNotes)}</div></section>` : ""}
       ${order.creditHoldNotes || order.verification?.creditHoldNotes ? `<section class="box"><h2>Credit Hold Notes</h2><div class="muted">${html(order.creditHoldNotes || order.verification?.creditHoldNotes)}</div></section>` : ""}
       ${followUp.notes ? `<section class="box"><h2>Follow Up Notes</h2><div class="muted">${html(followUp.notes)}</div></section>` : ""}
