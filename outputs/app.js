@@ -786,7 +786,7 @@ function dashboardView() {
     <div class="section split">
       <div class="panel">
         <div class="panel-head"><h2 class="panel-title">Recent Customer Orders</h2><div class="toolbar">${statusFilterControl()}<button class="btn" onclick="setView('orders')">View All</button></div></div>
-        <div class="table-wrap">${ordersTable(recent)}</div>
+        <div class="table-wrap">${ordersTable(recent, false, { showVerificationBadge: false })}</div>
       </div>
       ${isCredit() || isShipping() ? "" : `<div class="panel">
         <div class="panel-head"><h2 class="panel-title">Verification Queue</h2></div>
@@ -832,7 +832,8 @@ function ordersView() {
   `;
 }
 
-function ordersTable(orders, actions = false) {
+function ordersTable(orders, actions = false, options = {}) {
+  const showVerificationBadge = options.showVerificationBadge !== false;
   if (!orders.length) return `<div class="empty">No customer orders found.</div>`;
   return `<table>
     <thead><tr>${actions ? "<th></th>" : ""}<th>Order</th><th>Customer</th><th>Rep</th><th>Date</th><th>Total</th><th>Status</th>${actions ? "<th>Actions</th>" : ""}</tr></thead>
@@ -849,7 +850,7 @@ function ordersTable(orders, actions = false) {
             <td>${html(order.rep)}</td>
             <td>${html(order.date)}</td>
             <td>${money.format(orderTotal(order))}</td>
-            <td>${statusCell(order)}</td>
+            <td>${statusCell(order, { showVerificationBadge })}</td>
             ${actions ? `<td><div class="row-actions">
               <button class="icon-btn" title="Edit order" onclick="openOrderForm('${order.id}')">✎</button>
               <button class="icon-btn chat-icon" title="Order chat" onclick="openOrderChat('${order.id}')">💬${order.messages?.length ? `<span class="badge">${order.messages.length}</span>` : ""}</button>
@@ -933,11 +934,12 @@ function recordStatusChange(order, status, notes = "") {
   order.statusHistory.push({ status, label: statusLabel(status), at, by: order.statusChangedBy, notes });
 }
 
-function statusCell(order) {
+function statusCell(order, options = {}) {
+  const showVerificationBadge = options.showVerificationBadge !== false;
   return `
     <div class="status-cell">
       ${statusBadge(order.status)}
-      ${verificationStatusBadge(order)}
+      ${showVerificationBadge ? verificationStatusBadge(order) : ""}
       ${statusChangedLabel(order)}
       ${order.status === "verified" && order.verification?.verifiedBy ? `<div class="metric-note">Verified by ${html(order.verification.verifiedBy)}</div>` : ""}
       ${order.creditHoldNotes ? `<div class="metric-note">Credit Hold: ${html(order.creditHoldNotes)}</div>` : ""}
