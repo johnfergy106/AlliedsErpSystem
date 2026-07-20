@@ -869,6 +869,15 @@ function statusBadge(status) {
   return `<span class="status ${status}">${statusLabel(status)}</span>`;
 }
 
+function hasAssistantVerification(order) {
+  return Boolean(
+    order.status === "verification_in_progress"
+      || order.verification?.method === "Assistant"
+      || order.verification?.vapiCallId
+      || (Array.isArray(order.verificationHistory) && order.verificationHistory.some((entry) => entry.callId || entry.outcome))
+  );
+}
+
 function verificationStatusKey(order) {
   const state = String(order.verification?.state || "").toLowerCase();
   if (order.status === "verification_in_progress" || state === "verification_in_progress") return "calling";
@@ -897,6 +906,7 @@ function verificationStatusLabel(key) {
 }
 
 function verificationStatusBadge(order) {
+  if (!hasAssistantVerification(order)) return "";
   const key = verificationStatusKey(order);
   return `<span class="status verification-status ${key}">Verification: ${verificationStatusLabel(key)}</span>`;
 }
