@@ -4,6 +4,25 @@ const money = new Intl.NumberFormat("en-US", {
 });
 
 const seedData = {
+  unitOfMeasures: [
+    { id: "UOM-UNITS", name: "Units", singular_name: "unit", plural_name: "units", abbreviation: "EA", is_active: true, sort_order: 10, created_at: "2026-07-21T00:00:00.000Z", updated_at: "2026-07-21T00:00:00.000Z", created_by: "System" },
+    { id: "UOM-EACH", name: "Each", singular_name: "each", plural_name: "each", abbreviation: "EA", is_active: true, sort_order: 20, created_at: "2026-07-21T00:00:00.000Z", updated_at: "2026-07-21T00:00:00.000Z", created_by: "System" },
+    { id: "UOM-CASES", name: "Cases", singular_name: "case", plural_name: "cases", abbreviation: "CS", is_active: true, sort_order: 30, created_at: "2026-07-21T00:00:00.000Z", updated_at: "2026-07-21T00:00:00.000Z", created_by: "System" },
+    { id: "UOM-ROLLS", name: "Rolls", singular_name: "roll", plural_name: "rolls", abbreviation: "RL", is_active: true, sort_order: 40, created_at: "2026-07-21T00:00:00.000Z", updated_at: "2026-07-21T00:00:00.000Z", created_by: "System" },
+    { id: "UOM-COILS", name: "Coils", singular_name: "coil", plural_name: "coils", abbreviation: "CO", is_active: true, sort_order: 50, created_at: "2026-07-21T00:00:00.000Z", updated_at: "2026-07-21T00:00:00.000Z", created_by: "System" },
+    { id: "UOM-BOXES", name: "Boxes", singular_name: "box", plural_name: "boxes", abbreviation: "BX", is_active: true, sort_order: 60, created_at: "2026-07-21T00:00:00.000Z", updated_at: "2026-07-21T00:00:00.000Z", created_by: "System" },
+    { id: "UOM-CARTONS", name: "Cartons", singular_name: "carton", plural_name: "cartons", abbreviation: "CT", is_active: true, sort_order: 70, created_at: "2026-07-21T00:00:00.000Z", updated_at: "2026-07-21T00:00:00.000Z", created_by: "System" },
+    { id: "UOM-PACKS", name: "Packs", singular_name: "pack", plural_name: "packs", abbreviation: "PK", is_active: true, sort_order: 80, created_at: "2026-07-21T00:00:00.000Z", updated_at: "2026-07-21T00:00:00.000Z", created_by: "System" },
+    { id: "UOM-PALLETS", name: "Pallets", singular_name: "pallet", plural_name: "pallets", abbreviation: "PL", is_active: true, sort_order: 90, created_at: "2026-07-21T00:00:00.000Z", updated_at: "2026-07-21T00:00:00.000Z", created_by: "System" },
+    { id: "UOM-DRUMS", name: "Drums", singular_name: "drum", plural_name: "drums", abbreviation: "DR", is_active: true, sort_order: 100, created_at: "2026-07-21T00:00:00.000Z", updated_at: "2026-07-21T00:00:00.000Z", created_by: "System" },
+    { id: "UOM-BAGS", name: "Bags", singular_name: "bag", plural_name: "bags", abbreviation: "BG", is_active: true, sort_order: 110, created_at: "2026-07-21T00:00:00.000Z", updated_at: "2026-07-21T00:00:00.000Z", created_by: "System" },
+    { id: "UOM-BUNDLES", name: "Bundles", singular_name: "bundle", plural_name: "bundles", abbreviation: "BD", is_active: true, sort_order: 120, created_at: "2026-07-21T00:00:00.000Z", updated_at: "2026-07-21T00:00:00.000Z", created_by: "System" },
+    { id: "UOM-SETS", name: "Sets", singular_name: "set", plural_name: "sets", abbreviation: "SET", is_active: true, sort_order: 130, created_at: "2026-07-21T00:00:00.000Z", updated_at: "2026-07-21T00:00:00.000Z", created_by: "System" },
+    { id: "UOM-PAIRS", name: "Pairs", singular_name: "pair", plural_name: "pairs", abbreviation: "PR", is_active: true, sort_order: 140, created_at: "2026-07-21T00:00:00.000Z", updated_at: "2026-07-21T00:00:00.000Z", created_by: "System" },
+    { id: "UOM-FEET", name: "Feet", singular_name: "foot", plural_name: "feet", abbreviation: "FT", is_active: true, sort_order: 150, created_at: "2026-07-21T00:00:00.000Z", updated_at: "2026-07-21T00:00:00.000Z", created_by: "System" },
+    { id: "UOM-POUNDS", name: "Pounds", singular_name: "pound", plural_name: "pounds", abbreviation: "LB", is_active: true, sort_order: 160, created_at: "2026-07-21T00:00:00.000Z", updated_at: "2026-07-21T00:00:00.000Z", created_by: "System" },
+    { id: "UOM-GALLONS", name: "Gallons", singular_name: "gallon", plural_name: "gallons", abbreviation: "GAL", is_active: true, sort_order: 170, created_at: "2026-07-21T00:00:00.000Z", updated_at: "2026-07-21T00:00:00.000Z", created_by: "System" },
+  ],
   products: [
     { id: "P-1001", sku: "GLV-NIT-8", name: "Nitrile Work Gloves, Size 8", category: "Safety", price: 12.5, stock: 420 },
     { id: "P-1002", sku: "BRG-6205", name: "6205-2RS Ball Bearing", category: "Power Transmission", price: 7.85, stock: 178 },
@@ -146,6 +165,7 @@ function loadState() {
 function normalizeState(data) {
   data.settings = data.settings || {};
   delete data.settings.vapiApiKey;
+  data.unitOfMeasures = normalizeUnitOfMeasures(data.unitOfMeasures);
   data.deletedCustomers = Array.isArray(data.deletedCustomers) ? data.deletedCustomers : [];
   data.deletedProducts = Array.isArray(data.deletedProducts) ? data.deletedProducts : [];
   data.deletedUsers = Array.isArray(data.deletedUsers) ? data.deletedUsers : [];
@@ -161,6 +181,7 @@ function normalizeState(data) {
     return {
       ...order,
       status,
+      items: normalizeOrderItems(order.items, data.unitOfMeasures),
       statusChangedAt: at,
       statusChangedBy: by,
       statusHistory: Array.isArray(order.statusHistory) && order.statusHistory.length ? order.statusHistory : [{ status, label: statusLabel(status), at, by, notes: order.verification?.summary || "" }],
@@ -183,6 +204,83 @@ function normalizeState(data) {
     };
   });
   return data;
+}
+
+function normalizeUnitOfMeasures(units = []) {
+  const records = new Map();
+  [...seedData.unitOfMeasures, ...(Array.isArray(units) ? units : [])].forEach((unit, index) => {
+    if (!unit?.id && !unit?.name) return;
+    const id = unit.id || uid("UOM", [...records.values()]);
+    const name = String(unit.name || unit.plural_name || unit.singular_name || "Units").trim();
+    const singular = String(unit.singular_name || name.replace(/s$/i, "") || "unit").trim().toLowerCase();
+    const plural = String(unit.plural_name || name || `${singular}s`).trim().toLowerCase();
+    records.set(id, {
+      id,
+      name,
+      singular_name: singular,
+      plural_name: plural,
+      abbreviation: String(unit.abbreviation || "").trim(),
+      is_active: unit.is_active !== false,
+      sort_order: Number(unit.sort_order || (index + 1) * 10),
+      created_at: unit.created_at || new Date().toISOString(),
+      updated_at: unit.updated_at || unit.created_at || new Date().toISOString(),
+      created_by: unit.created_by || "System",
+    });
+  });
+  return [...records.values()].sort((a, b) => Number(a.sort_order || 0) - Number(b.sort_order || 0) || a.name.localeCompare(b.name));
+}
+
+function defaultUnitOfMeasure() {
+  return state?.unitOfMeasures?.find((unit) => unit.id === "UOM-UNITS") || state?.unitOfMeasures?.[0] || seedData.unitOfMeasures[0];
+}
+
+function unitOfMeasureById(id) {
+  return state.unitOfMeasures.find((unit) => unit.id === id) || null;
+}
+
+function unitOfMeasureByName(name) {
+  const target = String(name || "").trim().toLowerCase();
+  if (!target) return null;
+  return state.unitOfMeasures.find((unit) => [unit.name, unit.singular_name, unit.plural_name, unit.abbreviation].some((value) => String(value || "").trim().toLowerCase() === target)) || null;
+}
+
+function lineUnitOfMeasure(item = {}) {
+  return unitOfMeasureById(item.unit_of_measure_id) || unitOfMeasureByName(item.unit_of_measure_snapshot?.name || item.unit_of_measure_snapshot?.plural_name || item.unit || item.uom || item.unitOfMeasure) || defaultUnitOfMeasure();
+}
+
+function unitSnapshot(unit = defaultUnitOfMeasure()) {
+  return {
+    id: unit.id,
+    name: unit.name,
+    singular_name: unit.singular_name,
+    plural_name: unit.plural_name,
+    abbreviation: unit.abbreviation || "",
+  };
+}
+
+function normalizeOrderItems(items = [], units = state?.unitOfMeasures || seedData.unitOfMeasures) {
+  return (Array.isArray(items) ? items : []).map((item) => {
+    const unit = units.find((candidate) => candidate.id === item.unit_of_measure_id)
+      || units.find((candidate) => [candidate.name, candidate.singular_name, candidate.plural_name, candidate.abbreviation].some((value) => String(value || "").trim().toLowerCase() === String(item.unit_of_measure_snapshot?.name || item.unit_of_measure_snapshot?.plural_name || item.unit || item.uom || item.unitOfMeasure || "").trim().toLowerCase()))
+      || units.find((candidate) => candidate.id === "UOM-UNITS")
+      || units[0]
+      || seedData.unitOfMeasures[0];
+    return {
+      ...item,
+      unit_of_measure_id: unit.id,
+      unit_of_measure_snapshot: item.unit_of_measure_snapshot || unitSnapshot(unit),
+      unit_of_measure: unitSnapshot(unit),
+    };
+  });
+}
+
+function activeUnitOptions(currentId = "") {
+  const units = state.unitOfMeasures.filter((unit) => unit.is_active !== false || unit.id === currentId);
+  if (currentId && !units.some((unit) => unit.id === currentId)) {
+    const current = unitOfMeasureById(currentId);
+    if (current) units.push(current);
+  }
+  return units.sort((a, b) => Number(a.sort_order || 0) - Number(b.sort_order || 0) || a.name.localeCompare(b.name));
 }
 
 function saveState(options = {}) {
@@ -918,6 +1016,7 @@ function correctionCard(change) {
   return `<div class="correction-card">
     <div><strong>${html(change.label || change.field || "Customer Correction")}</strong><span class="status verification-status issue">${html(change.status || "Pending Review")}</span></div>
     <div class="note-grid">
+      ${change.product_name ? `<div><span>Product</span><p>${html(change.product_name)}</p></div>` : ""}
       <div><span>Current Value</span><p>${html(change.current_value || "Not provided")}</p></div>
       <div><span>Customer Stated</span><p>${html(change.customer_value || "Not provided")}</p></div>
     </div>
@@ -1141,7 +1240,9 @@ function vapiNoteCard(order, note) {
       <div><span>Summary</span><p>${html(note.summary || "No summary was provided.")}</p></div>
       ${note.cancellation_reason ? `<div><span>Cancellation Reason</span><p>${html(note.cancellation_reason)}</p></div>` : ""}
       ${note.callback_notes ? `<div><span>Callback Notes</span><p>${html(note.callback_notes)}</p></div>` : ""}
+      ${note.verified_items ? `<div><span>Verified Items</span><p>${html(note.verified_items)}</p></div>` : ""}
       ${note.purchase_order_note ? `<div><span>Purchase Order Number</span><p>${html(note.purchase_order_note)}</p></div>` : ""}
+      ${note.unit_classification_changes ? `<div><span>Unit Classification Changes</span><p>${html(note.unit_classification_changes)}</p></div>` : ""}
       ${note.change_summary ? `<div><span>Change Summary</span><p>${html(note.change_summary)}</p></div>` : ""}
       <div><span>Review Status</span><p>${html(note.change_review_status || "No changes reported")}</p></div>
       <div><span>Call Duration</span><p>${html(note.call_duration || "Not available")}</p></div>
@@ -1168,7 +1269,9 @@ function copyVapiNote(orderId, noteId) {
     `Summary: ${note.summary || ""}`,
     note.cancellation_reason ? `Cancellation reason: ${note.cancellation_reason}` : "",
     note.callback_notes ? `Callback notes: ${note.callback_notes}` : "",
+    note.verified_items ? `Verified items: ${note.verified_items}` : "",
     note.purchase_order_note ? `Purchase order number: ${note.purchase_order_note}` : "",
+    note.unit_classification_changes ? `Unit classification changes: ${note.unit_classification_changes}` : "",
     note.change_summary ? `Change summary: ${note.change_summary}` : "",
     `Review status: ${note.change_review_status || ""}`,
     `Call ID: ${note.vapi_call_id || ""}`,
@@ -1214,6 +1317,14 @@ function resolveCustomerCorrection(orderId, correctionId, status) {
   if (status === "Accepted" && change.field === "purchase_order_number") {
     order.purchase_order_number = change.customer_value || "";
   }
+  if (status === "Accepted" && change.field === "unit_of_measure") {
+    const unit = unitOfMeasureById(change.requested_unit_of_measure_id) || unitOfMeasureByName(change.customer_value);
+    const lineIndex = Number(change.line_index);
+    if (unit && Number.isInteger(lineIndex) && order.items?.[lineIndex]) {
+      order.items[lineIndex].unit_of_measure_id = unit.id;
+      order.items[lineIndex].unit_of_measure_snapshot = unitSnapshot(unit);
+    }
+  }
   change.status = status;
   change.reviewed_by = currentUser?.name || "";
   change.reviewed_at = timestamp();
@@ -1241,7 +1352,7 @@ function resolveCustomerCorrection(orderId, correctionId, status) {
   saveState();
   render();
   openVapiNotes(orderId);
-  toast(status === "Accepted" ? "Purchase Order Number updated." : "Purchase Order Number correction rejected.");
+  toast(status === "Accepted" ? `${change.label || "Customer correction"} updated.` : `${change.label || "Customer correction"} rejected.`);
 }
 
 function openOrderChat(orderId) {
@@ -1510,10 +1621,12 @@ function orderDocumentHtml(order) {
     .map((item) => {
       const product = productById(item.productId) || {};
       const lineTotal = Number(item.qty) * Number(item.price);
+      const unit = lineUnitOfMeasure(item);
       return `<tr>
         <td>${html(product.sku || "")}</td>
         <td>${html(product.name || "")}</td>
         <td>${html(item.qty)}</td>
+        <td>${html(Number(item.qty) === 1 ? unit.singular_name : unit.plural_name)}</td>
         <td>${money.format(Number(item.price))}</td>
         <td>${money.format(lineTotal)}</td>
       </tr>`;
@@ -1600,7 +1713,7 @@ function orderDocumentHtml(order) {
         </div>
       </section>
       <table>
-        <thead><tr><th>SKU</th><th>Product</th><th>Qty</th><th>Unit Price</th><th>Line Total</th></tr></thead>
+        <thead><tr><th>SKU</th><th>Product</th><th>Qty</th><th>Unit</th><th>Unit Price</th><th>Line Total</th></tr></thead>
         <tbody>${lines}</tbody>
       </table>
       <div class="total">Total: ${money.format(orderTotal(order))}</div>
@@ -1662,9 +1775,10 @@ function packingListHtml(order) {
   const address = orderAddress(order);
   const lines = order.items.map((item) => {
     const product = productById(item.productId) || {};
-    return `<tr><td>${html(product.sku || "")}</td><td>${html(product.name || "")}</td><td>${html(item.qty)}</td><td></td><td></td></tr>`;
+    const unit = lineUnitOfMeasure(item);
+    return `<tr><td>${html(product.sku || "")}</td><td>${html(product.name || "")}</td><td>${html(item.qty)}</td><td>${html(Number(item.qty) === 1 ? unit.singular_name : unit.plural_name)}</td><td></td><td></td></tr>`;
   }).join("");
-  return `<!doctype html><html><head><meta charset="UTF-8" /><title>${html(displayOrderNumber(order))} - Packing List</title><style>body{font-family:Arial,sans-serif;color:#17212b}.doc{max-width:850px;margin:0 auto;padding:32px}.head{display:flex;justify-content:space-between;border-bottom:2px solid #17212b;padding-bottom:14px}.muted{color:#5b6673;font-size:13px;line-height:1.5}table{width:100%;border-collapse:collapse;margin-top:22px}th,td{border-bottom:1px solid #d8dee6;padding:10px;text-align:left}th{background:#f4f6f8}.box{border:1px solid #d8dee6;border-radius:8px;padding:14px;margin-top:18px}.footer{border-top:1px solid #d8dee6;margin-top:24px;padding-top:14px;text-align:center;font-size:12px;color:#5b6673}.print-actions{text-align:right;margin-bottom:12px}button{background:#176f73;color:#fff;border:0;border-radius:6px;padding:8px 12px}@media print{.print-actions{display:none}.doc{padding:0}}</style></head><body><main class="doc"><div class="print-actions"><button onclick="window.print()">Print</button></div><section class="head"><div><h1>Packing List</h1><div class="muted">Allied Industrial Supplies, Inc.</div><div class="muted">Alliedsupplies.net</div></div><div><strong>Order # ${html(displayOrderNumber(order))}</strong>${order.partNumber ? `<div class="muted">${orderPartLabel(order)}</div>` : ""}<div class="muted">Ship Date: ${html(order.shipDate || "")}</div><div class="muted">Tracking: ${html(order.trackingInfo || "")}</div></div></section><section class="box"><strong>${html(customer.name || "")}</strong><div class="muted">${html(address.address)}</div><div class="muted">${html(address.city)} ${html(address.state)} ${html(address.zip)}</div></section><table><thead><tr><th>SKU</th><th>Product</th><th>Qty Ordered</th><th>Qty Packed</th><th>Back Ordered</th></tr></thead><tbody>${lines}</tbody></table><section class="box"><div>Picked By: ____________________</div><br><div>Checked By: ____________________</div></section><footer class="footer"><strong>Alliedsupplies.net</strong><br>No Returns without prior Authorization</footer></main></body></html>`;
+  return `<!doctype html><html><head><meta charset="UTF-8" /><title>${html(displayOrderNumber(order))} - Packing List</title><style>body{font-family:Arial,sans-serif;color:#17212b}.doc{max-width:850px;margin:0 auto;padding:32px}.head{display:flex;justify-content:space-between;border-bottom:2px solid #17212b;padding-bottom:14px}.muted{color:#5b6673;font-size:13px;line-height:1.5}table{width:100%;border-collapse:collapse;margin-top:22px}th,td{border-bottom:1px solid #d8dee6;padding:10px;text-align:left}th{background:#f4f6f8}.box{border:1px solid #d8dee6;border-radius:8px;padding:14px;margin-top:18px}.footer{border-top:1px solid #d8dee6;margin-top:24px;padding-top:14px;text-align:center;font-size:12px;color:#5b6673}.print-actions{text-align:right;margin-bottom:12px}button{background:#176f73;color:#fff;border:0;border-radius:6px;padding:8px 12px}@media print{.print-actions{display:none}.doc{padding:0}}</style></head><body><main class="doc"><div class="print-actions"><button onclick="window.print()">Print</button></div><section class="head"><div><h1>Packing List</h1><div class="muted">Allied Industrial Supplies, Inc.</div><div class="muted">Alliedsupplies.net</div></div><div><strong>Order # ${html(displayOrderNumber(order))}</strong>${order.partNumber ? `<div class="muted">${orderPartLabel(order)}</div>` : ""}<div class="muted">Ship Date: ${html(order.shipDate || "")}</div><div class="muted">Tracking: ${html(order.trackingInfo || "")}</div></div></section><section class="box"><strong>${html(customer.name || "")}</strong><div class="muted">${html(address.address)}</div><div class="muted">${html(address.city)} ${html(address.state)} ${html(address.zip)}</div></section><table><thead><tr><th>SKU</th><th>Product</th><th>Qty Ordered</th><th>Unit</th><th>Qty Packed</th><th>Back Ordered</th></tr></thead><tbody>${lines}</tbody></table><section class="box"><div>Picked By: ____________________</div><br><div>Checked By: ____________________</div></section><footer class="footer"><strong>Alliedsupplies.net</strong><br>No Returns without prior Authorization</footer></main></body></html>`;
 }
 
 function printPackingList(orderId) {
@@ -1917,8 +2031,67 @@ function settingsView() {
           <div class="callout">Orders can be verified manually with internal notes or sent to Assistant Verification from the Orders screen. Assistant Verification starts an outbound Vapi call, then marks the order verified only after Vapi sends a successful completion webhook.</div>
         </div>
       </div>
+      <div class="panel">
+        <div class="panel-head"><h2 class="panel-title">Unit of Measure Classifications</h2><div class="toolbar">${isAdmin() ? `<button class="btn" onclick="addUnitOfMeasure()">+ Add</button>` : ""}</div></div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Display</th><th>Singular</th><th>Plural</th><th>Abbrev.</th><th>Status</th><th>Sort</th><th>Actions</th></tr></thead>
+            <tbody>${state.unitOfMeasures.map((unit) => `<tr>
+              <td><strong>${html(unit.name)}</strong></td>
+              <td>${html(unit.singular_name)}</td>
+              <td>${html(unit.plural_name)}</td>
+              <td>${html(unit.abbreviation || "")}</td>
+              <td>${unit.is_active === false ? "Inactive" : "Active"}</td>
+              <td>${html(unit.sort_order || "")}</td>
+              <td><div class="row-actions">${isAdmin() ? `<button class="icon-btn" title="Edit classification" onclick="editUnitOfMeasure('${unit.id}')">✎</button><button class="btn mini-btn" onclick="toggleUnitOfMeasure('${unit.id}')">${unit.is_active === false ? "Activate" : "Deactivate"}</button><button class="icon-btn" title="Move up" onclick="moveUnitOfMeasure('${unit.id}', -1)">↑</button><button class="icon-btn" title="Move down" onclick="moveUnitOfMeasure('${unit.id}', 1)">↓</button>` : ""}</div></td>
+            </tr>`).join("")}</tbody>
+          </table>
+        </div>
+      </div>
     </div>
   `;
+}
+
+function addUnitOfMeasure() {
+  const created = promptForUnitOfMeasure();
+  if (created) {
+    render();
+    toast(`${created.name} added.`);
+  }
+}
+
+function editUnitOfMeasure(id) {
+  const unit = unitOfMeasureById(id);
+  if (!unit) return toast("Classification was not found.");
+  const updated = promptForUnitOfMeasure(unit);
+  if (updated) {
+    render();
+    toast(`${updated.name} updated.`);
+  }
+}
+
+function toggleUnitOfMeasure(id) {
+  if (!isAdmin()) return toast("Only admins can update classifications.");
+  const unit = unitOfMeasureById(id);
+  if (!unit) return toast("Classification was not found.");
+  unit.is_active = unit.is_active === false;
+  unit.updated_at = new Date().toISOString();
+  saveState();
+  render();
+}
+
+function moveUnitOfMeasure(id, direction) {
+  if (!isAdmin()) return toast("Only admins can reorder classifications.");
+  const units = state.unitOfMeasures;
+  const index = units.findIndex((unit) => unit.id === id);
+  const nextIndex = index + direction;
+  if (index < 0 || nextIndex < 0 || nextIndex >= units.length) return;
+  const currentSort = units[index].sort_order;
+  units[index].sort_order = units[nextIndex].sort_order;
+  units[nextIndex].sort_order = currentSort;
+  state.unitOfMeasures = normalizeUnitOfMeasures(units);
+  saveState();
+  render();
 }
 
 function openUserForm(username = null) {
@@ -2008,7 +2181,7 @@ function openOrderForm(id = null) {
   const firstProduct = visibleProducts()[0] || state.products[0];
   const order = id
     ? state.orders.find((item) => item.id === id)
-    : { id: uid("SO", state.orders), customerId: firstCustomer?.id, rep: isAdmin() ? "" : currentUser.name, date: new Date().toISOString().slice(0, 10), status: "pending", partNumber: "", purchase_order_number: "", notes: "", items: [{ productId: firstProduct?.id, qty: 1, price: firstProduct?.price || 0 }] };
+    : { id: uid("SO", state.orders), customerId: firstCustomer?.id, rep: isAdmin() ? "" : currentUser.name, date: new Date().toISOString().slice(0, 10), status: "pending", partNumber: "", purchase_order_number: "", notes: "", items: [{ productId: firstProduct?.id, qty: 1, unit_of_measure_id: defaultUnitOfMeasure().id, unit_of_measure_snapshot: unitSnapshot(defaultUnitOfMeasure()), price: firstProduct?.price || 0 }] };
   openOrderFormFromDraft(order, id);
 }
 
@@ -2109,9 +2282,12 @@ function openOrderFormFromDraft(order, id = null) {
 function lineItemHtml(item) {
   const products = selectableProducts(item.productId);
   const product = productById(item.productId) || products[0];
+  const unit = lineUnitOfMeasure(item);
+  const unitOptions = activeUnitOptions(unit.id);
   return `<div class="line-item">
     <div class="field"><label>Product</label><select class="line-product" onchange="syncLinePrice(this)">${products.map((p) => `<option value="${p.id}" data-price="${p.price}" ${p.id === item.productId ? "selected" : ""}>${html(p.sku)} · ${html(p.name)}</option>`).join("")}</select></div>
     <div class="field"><label>Qty</label><input class="line-qty" type="number" min="1" value="${html(item.qty)}" /></div>
+    <div class="field"><label>Ship As / Unit of Measure</label><select class="line-uom" data-testid="line-uom-select" onchange="handleLineUomChange(this)">${unitOptions.map((uom) => `<option value="${html(uom.id)}" ${uom.id === unit.id ? "selected" : ""}>${html(uom.name)}</option>`).join("")}<option value="__add_uom__">+ Add New Classification</option></select></div>
     <div class="field"><label>Price</label><input class="line-price" type="number" min="0" step="0.01" value="${html(item.price || product?.price || 0)}" /></div>
     <button class="icon-btn" title="Remove item" type="button" onclick="this.closest('.line-item').remove()">×</button>
   </div>`;
@@ -2124,7 +2300,82 @@ function syncLinePrice(select) {
 
 function addLineItem() {
   const product = visibleProducts()[0] || state.products[0];
-  document.querySelector("#lineItems").insertAdjacentHTML("beforeend", lineItemHtml({ productId: product?.id, qty: 1, price: product?.price || 0 }));
+  const unit = defaultUnitOfMeasure();
+  document.querySelector("#lineItems").insertAdjacentHTML("beforeend", lineItemHtml({ productId: product?.id, qty: 1, price: product?.price || 0, unit_of_measure_id: unit.id, unit_of_measure_snapshot: unitSnapshot(unit) }));
+}
+
+function handleLineUomChange(select) {
+  if (select.value !== "__add_uom__") return;
+  const created = promptForUnitOfMeasure();
+  if (created) {
+    refreshLineUomSelects(select, created.id);
+    select.value = created.id;
+  } else {
+    select.value = defaultUnitOfMeasure().id;
+  }
+}
+
+function promptForUnitOfMeasure(existing = null) {
+  if (existing && !isAdmin()) {
+    toast("Only admins can edit shared classifications.");
+    return null;
+  }
+  const name = window.prompt("Display Name", existing?.name || "");
+  if (name === null) return null;
+  const singular = window.prompt("Singular Name", existing?.singular_name || name.trim().replace(/s$/i, "").toLowerCase());
+  if (singular === null) return null;
+  const plural = window.prompt("Plural Name", existing?.plural_name || name.trim().toLowerCase());
+  if (plural === null) return null;
+  const abbreviation = window.prompt("Abbreviation (Optional)", existing?.abbreviation || "") || "";
+  return saveUnitOfMeasureRecord({
+    ...(existing || {}),
+    name: name.trim(),
+    singular_name: singular.trim().toLowerCase(),
+    plural_name: plural.trim().toLowerCase(),
+    abbreviation: abbreviation.trim(),
+  });
+}
+
+function saveUnitOfMeasureRecord(unit) {
+  const name = String(unit.name || "").trim();
+  const singular = String(unit.singular_name || "").trim().toLowerCase();
+  const plural = String(unit.plural_name || "").trim().toLowerCase();
+  if (!name || !singular || !plural) {
+    toast("Display, singular, and plural names are required.");
+    return null;
+  }
+  const duplicate = state.unitOfMeasures.find((item) => item.id !== unit.id && item.name.trim().toLowerCase() === name.toLowerCase());
+  if (duplicate) {
+    toast("That classification already exists.");
+    return null;
+  }
+  const now = new Date().toISOString();
+  const record = {
+    id: unit.id || uid("UOM", state.unitOfMeasures),
+    name,
+    singular_name: singular,
+    plural_name: plural,
+    abbreviation: String(unit.abbreviation || "").trim(),
+    is_active: unit.is_active !== false,
+    sort_order: Number(unit.sort_order || ((state.unitOfMeasures.length + 1) * 10)),
+    created_at: unit.created_at || now,
+    updated_at: now,
+    created_by: unit.created_by || currentUser?.name || "",
+  };
+  const index = state.unitOfMeasures.findIndex((item) => item.id === record.id);
+  if (index >= 0) state.unitOfMeasures[index] = record;
+  else state.unitOfMeasures.push(record);
+  state.unitOfMeasures = normalizeUnitOfMeasures(state.unitOfMeasures);
+  saveState();
+  return record;
+}
+
+function refreshLineUomSelects(changedSelect = null, selectedId = "") {
+  document.querySelectorAll(".line-uom").forEach((select) => {
+    const current = select === changedSelect ? selectedId : select.value || defaultUnitOfMeasure().id;
+    select.innerHTML = `${activeUnitOptions(current).map((uom) => `<option value="${html(uom.id)}" ${uom.id === current ? "selected" : ""}>${html(uom.name)}</option>`).join("")}<option value="__add_uom__">+ Add New Classification</option>`;
+    select.value = current;
+  });
 }
 
 function handleOrderCustomerChange() {
@@ -2164,11 +2415,16 @@ function setPromoLocationType(checkbox) {
 function saveOrder(event) {
   event.preventDefault();
   const saveAction = event.submitter?.value || "close";
-  const items = [...document.querySelectorAll(".line-item")].map((row) => ({
-    productId: row.querySelector(".line-product").value,
-    qty: Number(row.querySelector(".line-qty").value),
-    price: Number(row.querySelector(".line-price").value),
-  }));
+  const items = [...document.querySelectorAll(".line-item")].map((row) => {
+    const unit = unitOfMeasureById(row.querySelector(".line-uom")?.value) || defaultUnitOfMeasure();
+    return {
+      productId: row.querySelector(".line-product").value,
+      qty: Number(row.querySelector(".line-qty").value),
+      unit_of_measure_id: unit.id,
+      unit_of_measure_snapshot: unitSnapshot(unit),
+      price: Number(row.querySelector(".line-price").value),
+    };
+  });
   if (!items.length) return toast("Add at least one line item.");
 
   const orderId = document.querySelector("#orderId").value;
@@ -2293,7 +2549,7 @@ function saveOrder(event) {
       billTo: order.billTo,
       promoTicket: order.promoTicket,
       notes: "",
-      items: [{ productId: firstProduct?.id, qty: 1, price: firstProduct?.price || 0 }],
+      items: [{ productId: firstProduct?.id, qty: 1, unit_of_measure_id: defaultUnitOfMeasure().id, unit_of_measure_snapshot: unitSnapshot(defaultUnitOfMeasure()), price: firstProduct?.price || 0 }],
     });
     toast(`${order.id} saved. Add the next part order.`);
     return;
@@ -2490,7 +2746,7 @@ function openOrderFormForCustomer(customerId) {
     cellPhone: customer?.cellPhone || "",
     preferredPhone: customer?.preferredPhone || "phone",
     address: customerAddress(customer),
-    items: [{ productId: firstProduct?.id, qty: 1, price: firstProduct?.price || 0 }],
+    items: [{ productId: firstProduct?.id, qty: 1, unit_of_measure_id: defaultUnitOfMeasure().id, unit_of_measure_snapshot: unitSnapshot(defaultUnitOfMeasure()), price: firstProduct?.price || 0 }],
   };
   openOrderFormFromDraft(order);
 }
@@ -2641,7 +2897,8 @@ function buildVerificationPayload(order) {
       total: orderTotal(order),
       items: order.items.map((item) => {
         const product = productById(item.productId);
-        return { sku: product?.sku, name: product?.name, category: product?.category, orderedQty: item.qty, unitPrice: item.price };
+        const unit = lineUnitOfMeasure(item);
+        return { sku: product?.sku, name: product?.name, category: product?.category, orderedQty: item.qty, unitPrice: item.price, unit_of_measure_id: unit.id, unit_of_measure: unitSnapshot(unit), unit: Number(item.qty) === 1 ? unit.singular_name : unit.plural_name };
       }),
     },
   };

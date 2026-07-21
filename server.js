@@ -20,6 +20,36 @@ const starterUsers = [
   { username: "jordan", role: "sales", name: "Jordan Lee" },
   { username: "avery", role: "sales", name: "Avery Brooks" },
 ];
+const defaultUnitOfMeasures = [
+  ["UOM-UNITS", "Units", "unit", "units", "EA"],
+  ["UOM-EACH", "Each", "each", "each", "EA"],
+  ["UOM-CASES", "Cases", "case", "cases", "CS"],
+  ["UOM-ROLLS", "Rolls", "roll", "rolls", "RL"],
+  ["UOM-COILS", "Coils", "coil", "coils", "CO"],
+  ["UOM-BOXES", "Boxes", "box", "boxes", "BX"],
+  ["UOM-CARTONS", "Cartons", "carton", "cartons", "CT"],
+  ["UOM-PACKS", "Packs", "pack", "packs", "PK"],
+  ["UOM-PALLETS", "Pallets", "pallet", "pallets", "PL"],
+  ["UOM-DRUMS", "Drums", "drum", "drums", "DR"],
+  ["UOM-BAGS", "Bags", "bag", "bags", "BG"],
+  ["UOM-BUNDLES", "Bundles", "bundle", "bundles", "BD"],
+  ["UOM-SETS", "Sets", "set", "sets", "SET"],
+  ["UOM-PAIRS", "Pairs", "pair", "pairs", "PR"],
+  ["UOM-FEET", "Feet", "foot", "feet", "FT"],
+  ["UOM-POUNDS", "Pounds", "pound", "pounds", "LB"],
+  ["UOM-GALLONS", "Gallons", "gallon", "gallons", "GAL"],
+].map(([id, name, singular_name, plural_name, abbreviation], index) => ({
+  id,
+  name,
+  singular_name,
+  plural_name,
+  abbreviation,
+  is_active: true,
+  sort_order: (index + 1) * 10,
+  created_at: "2026-07-21T00:00:00.000Z",
+  updated_at: "2026-07-21T00:00:00.000Z",
+  created_by: "System",
+}));
 const envPasswordKeys = {
   admin: "ALLIED_ERP_ADMIN_PASSWORD",
   credit: "ALLIED_ERP_CREDIT_PASSWORD",
@@ -67,16 +97,88 @@ async function readSharedStateJson() {
 }
 
 function migrateOrderRecord(order = {}) {
+  const units = normalizeUnitOfMeasuresForState({});
   return {
     ...order,
     purchase_order_number: purchaseOrderNumber(order) || "",
+    items: Array.isArray(order.items) ? order.items.map((item) => migrateLineItem(item, units)) : order.items,
   };
 }
 
 function migrateSharedState(state = {}) {
+  const unitOfMeasures = normalizeUnitOfMeasuresForState(state);
   return {
     ...state,
-    orders: Array.isArray(state.orders) ? state.orders.map(migrateOrderRecord) : state.orders,
+    unitOfMeasures,
+    orders: Array.isArray(state.orders) ? state.orders.map((order) => ({
+      ...order,
+      purchase_order_number: purchaseOrderNumber(order) || "",
+      items: Array.isArray(order.items) ? order.items.map((item) => migrateLineItem(item, unitOfMeasures)) : order.items,
+    })) : state.orders,
+  };
+}
+
+function normalizeUnitOfMeasuresForState(state = {}) {
+  const records = new Map();
+  [...defaultUnitOfMeasures, ...(Array.isArray(state.unitOfMeasures) ? state.unitOfMeasures : [])].forEach((unit, index) => {
+    if (!unit?.id && !unit?.name) return;
+    const id = unit.id || `UOM-${Date.now()}-${index}`;
+    const name = String(unit.name || unit.plural_name || unit.singular_name || "Units").trim();
+    const singular = String(unit.singular_name || name.replace(/s$/i, "") || "unit").trim().toLowerCase();
+    const plural = String(unit.plural_name || name || `${singular}s`).trim().toLowerCase();
+    records.set(id, {
+      id,
+      name,
+      singular_name: singular,
+      plural_name: plural,
+      abbreviation: String(unit.abbreviation || "").trim(),
+      is_active: unit.is_active !== false,
+      sort_order: Number(unit.sort_order || (index + 1) * 10),
+      created_at: unit.created_at || new Date().toISOString(),
+      updated_at: unit.updated_at || unit.created_at || new Date().toISOString(),
+      created_by: unit.created_by || "System",
+    });
+  });
+  return [...records.values()].sort((a, b) => Number(a.sort_order || 0) - Number(b.sort_order || 0) || a.name.localeCompare(b.name));
+}
+
+function unitByName(units = [], name = "") {
+  const target = String(name || "").trim().toLowerCase();
+  if (!target) return null;
+  return units.find((unit) => [unit.name, unit.singular_name, unit.plural_name, unit.abbreviation].some((value) => String(value || "").trim().toLowerCase() === target)) || null;
+}
+
+function unitById(units = [], id = "") {
+  return units.find((unit) => unit.id === id) || null;
+}
+
+function defaultUnit(units = defaultUnitOfMeasures) {
+  return unitById(units, "UOM-UNITS") || units[0] || defaultUnitOfMeasures[0];
+}
+
+function unitSnapshot(unit = defaultUnit()) {
+  return {
+    id: unit.id,
+    name: unit.name,
+    singular_name: unit.singular_name,
+    plural_name: unit.plural_name,
+    abbreviation: unit.abbreviation || "",
+  };
+}
+
+function lineItemUnit(item = {}, units = defaultUnitOfMeasures) {
+  return unitById(units, item.unit_of_measure_id)
+    || unitByName(units, item.unit_of_measure_snapshot?.name || item.unit_of_measure_snapshot?.plural_name || item.unit || item.uom || item.unitOfMeasure)
+    || defaultUnit(units);
+}
+
+function migrateLineItem(item = {}, units = defaultUnitOfMeasures) {
+  const unit = lineItemUnit(item, units);
+  return {
+    ...item,
+    unit_of_measure_id: unit.id,
+    unit_of_measure_snapshot: item.unit_of_measure_snapshot || unitSnapshot(unit),
+    unit_of_measure: unitSnapshot(unit),
   };
 }
 
@@ -239,7 +341,7 @@ function mergeOrders(existing = [], incoming = []) {
     const id = order?.id;
     if (!id) return;
     const previous = records.get(String(id));
-    records.set(String(id), previous ? mergeOrderRecord(previous, order) : migrateOrderRecord(order));
+    records.set(String(id), previous ? mergeOrderRecord(previous, order) : order);
   });
   return [...records.values()];
 }
@@ -252,6 +354,7 @@ function mergeSharedState(existing = {}, incoming = {}) {
   const processedVapiCallIds = uniqueList(existing.processedVapiCallIds, incoming.processedVapiCallIds);
   const vapiStructuredOutputRetries = mergeByKey(existing.vapiStructuredOutputRetries, incoming.vapiStructuredOutputRetries, "callId");
   const auditLog = mergeStateAuditLogs(existing, incoming);
+  const unitOfMeasures = normalizeUnitOfMeasuresForState({ unitOfMeasures: mergeByKey(existing.unitOfMeasures, incoming.unitOfMeasures, "id") });
   const merged = {
     ...existing,
     ...incoming,
@@ -263,8 +366,12 @@ function mergeSharedState(existing = {}, incoming = {}) {
     processedVapiCallIds,
     vapiStructuredOutputRetries,
     auditLog,
+    unitOfMeasures,
   };
-  merged.orders = mergeOrders(existing.orders, incoming.orders);
+  merged.orders = mergeOrders(existing.orders, incoming.orders).map((order) => ({
+    ...order,
+    items: Array.isArray(order.items) ? order.items.map((item) => migrateLineItem(item, unitOfMeasures)) : order.items,
+  }));
   merged.customers = mergeByKey(existing.customers, incoming.customers, "id", deletedCustomers);
   merged.products = mergeByKey(existing.products, incoming.products, "id", deletedProducts);
   merged.users = mergeByKey(existing.users, incoming.users, "username", deletedUsers);
@@ -735,6 +842,27 @@ function purchaseOrderCorrectionSummary(analysis = {}) {
   return "";
 }
 
+function unitClassificationChanged(analysis = {}) {
+  return structuredBoolean(analysis, "unit_classification_changed", "unitClassificationChanged");
+}
+
+function parseUnitClassificationChanges(text = "") {
+  return String(text || "")
+    .split(/\n|;/)
+    .map((line) => line.trim().replace(/\.$/, ""))
+    .filter(Boolean)
+    .map((line) => {
+      const match = line.match(/(.+?)\s+changed\s+from\s+(.+?)\s+to\s+(.+)$/i);
+      if (!match) return { summary: line };
+      return {
+        product_name: match[1].trim(),
+        current_value: match[2].trim(),
+        customer_value: match[3].trim(),
+        summary: line,
+      };
+    });
+}
+
 function ensureAuditLog(sharedState) {
   if (!Array.isArray(sharedState.auditLog)) sharedState.auditLog = [];
   return sharedState.auditLog;
@@ -758,9 +886,12 @@ function upsertVapiOrderNote(sharedState, order, details) {
   const changesReported = structuredBoolean(analysis, "changes_reported", "changesReported");
   const changeSummary = structuredText(analysis, "change_summary", "changeSummary");
   const poChanged = purchaseOrderChanged(analysis);
+  const unitChanged = unitClassificationChanged(analysis);
+  const unitChanges = structuredText(analysis, "unit_classification_changes", "unitClassificationChanges");
   const poOld = structuredText(analysis, "purchase_order_number_old", "purchaseOrderNumberOld") || purchaseOrderNumber(order);
   const poNew = structuredText(analysis, "purchase_order_number_new", "purchaseOrderNumberNew");
   const poNote = purchaseOrderCorrectionSummary(analysis);
+  const verifiedItems = orderItemsForStoredOrder(sharedState, order);
   const note = {
     id: existing?.id || `VN-${callId || Date.now()}`,
     sales_order_id: order.id,
@@ -784,7 +915,10 @@ function upsertVapiOrderNote(sharedState, order, details) {
     purchase_order_number_old: poOld,
     purchase_order_number_new: poNew,
     purchase_order_note: poNote,
-    change_review_status: existing?.change_review_status || (changesReported || meaningfulChangeSummary(changeSummary) || poChanged ? "Pending Review" : ""),
+    unit_classification_changed: unitChanged,
+    unit_classification_changes: unitChanges,
+    verified_items: verifiedItems,
+    change_review_status: existing?.change_review_status || (changesReported || meaningfulChangeSummary(changeSummary) || poChanged || unitChanged ? "Pending Review" : ""),
     transcript: transcript || "",
     ended_reason: endReason || "",
     assistant_name: assistantName || "",
@@ -804,13 +938,28 @@ function upsertVapiOrderNote(sharedState, order, details) {
   return note;
 }
 
+function orderItemsForStoredOrder(sharedState = {}, order = {}) {
+  const products = Array.isArray(sharedState.products) ? sharedState.products : [];
+  const units = normalizeUnitOfMeasuresForState(sharedState);
+  const items = (Array.isArray(order.items) ? order.items : []).map((item) => {
+    const product = products.find((candidate) => candidate.id === item.productId) || {};
+    const unit = lineItemUnit(item, units);
+    return {
+      name: product.name || item.name || "",
+      orderedQty: item.qty || item.orderedQty || 0,
+      unit_of_measure: unitSnapshot(unit),
+    };
+  });
+  return orderItemsSentence(items);
+}
+
 function updateVapiNotesCount(order) {
   order.vapi_notes_count = Array.isArray(order.vapiNotes) ? order.vapiNotes.length : 0;
   console.log(`[vapi-notes] Notes count updated order=${order.id} count=${order.vapi_notes_count}`);
 }
 
 function applyVapiChangeFlag(sharedState, order, note, callId) {
-  const shouldFlag = note?.changes_reported === true || Boolean(meaningfulChangeSummary(note?.change_summary)) || note?.purchase_order_number_changed === true;
+  const shouldFlag = note?.changes_reported === true || Boolean(meaningfulChangeSummary(note?.change_summary)) || note?.purchase_order_number_changed === true || note?.unit_classification_changed === true;
   if (!shouldFlag) return;
   const previous = order.vapi_change_review_status || "";
   order.has_vapi_changes = true;
@@ -837,6 +986,37 @@ function applyVapiChangeFlag(sharedState, order, note, callId) {
     };
     if (existingChange) Object.assign(existingChange, change);
     else order.customerChangeRequests.push(change);
+  }
+  if (note?.unit_classification_changed && note.unit_classification_changes) {
+    if (!Array.isArray(order.customerChangeRequests)) order.customerChangeRequests = [];
+    const products = Array.isArray(sharedState.products) ? sharedState.products : [];
+    const units = normalizeUnitOfMeasuresForState(sharedState);
+    parseUnitClassificationChanges(note.unit_classification_changes).forEach((changeText, index) => {
+      const product = products.find((candidate) => candidate.name && changeText.product_name && candidate.name.trim().toLowerCase() === changeText.product_name.trim().toLowerCase()) || {};
+      const lineIndex = (order.items || []).findIndex((item) => item.productId === product.id);
+      const lineItem = lineIndex >= 0 ? order.items[lineIndex] : null;
+      const currentUnit = lineItem ? lineItemUnit(lineItem, units) : unitByName(units, changeText.current_value);
+      const requestedUnit = unitByName(units, changeText.customer_value);
+      const changeId = `UOM-${callId || Date.now()}-${index}`;
+      const existingChange = order.customerChangeRequests.find((change) => change.id === changeId);
+      const change = {
+        id: existingChange?.id || changeId,
+        order_id: order.id,
+        field: "unit_of_measure",
+        label: "Unit of Measure",
+        product_name: changeText.product_name || product.name || "",
+        line_index: lineIndex,
+        current_value: currentUnit?.name || changeText.current_value || "",
+        customer_value: requestedUnit?.name || changeText.customer_value || "",
+        requested_unit_of_measure_id: requestedUnit?.id || "",
+        status: existingChange?.status || "Pending Review",
+        vapi_call_id: callId || "",
+        created_at: existingChange?.created_at || new Date().toISOString(),
+        summary: changeText.summary || note.unit_classification_changes,
+      };
+      if (existingChange) Object.assign(existingChange, change);
+      else order.customerChangeRequests.push(change);
+    });
   }
   addAuditEntry(sharedState, {
     action: "Order flagged for customer change",
@@ -1161,6 +1341,8 @@ function singularizeUnit(unit) {
 }
 
 function quantityUnitLabel(quantity, item = {}) {
+  const unitObject = item.unit_of_measure || item.unitOfMeasureRecord || item.unit_of_measure_snapshot || null;
+  if (unitObject) return Number(quantity) === 1 ? unitObject.singular_name || "unit" : unitObject.plural_name || unitObject.singular_name || "units";
   const productName = String(item.name || "").toLowerCase();
   const rawUnit = item.unit || item.uom || item.unitOfMeasure || "";
   let unit = singularizeUnit(rawUnit);
@@ -1240,7 +1422,7 @@ function unitPriceDetailsSentence(items = []) {
       const name = productName(item);
       if (!name) return "";
       const unitPrice = itemUnitPrice(item);
-      const unit = singularizeUnit(item.unit || item.uom || item.unitOfMeasure || quantityUnitLabel(1, item));
+      const unit = item.unit_of_measure?.singular_name || item.unit_of_measure_snapshot?.singular_name || singularizeUnit(item.unit || item.uom || item.unitOfMeasure || quantityUnitLabel(1, item));
       return `${name}: ${unitPrice === null ? "unit price not available" : `${formatMoney(unitPrice)} per ${unit}`}.`;
     })
     .filter(Boolean)
@@ -1358,6 +1540,76 @@ const server = createServer(async (request, response) => {
         "Cache-Control": "no-store",
       });
       response.end(JSON.stringify({ ok: true, savedAt: new Date().toISOString(), state: mergedState }));
+      return;
+    }
+
+    if (requestUrl.pathname === "/api/units-of-measure" && request.method === "GET") {
+      const sharedState = await readSharedStateJson();
+      sendJson(response, 200, { ok: true, units: normalizeUnitOfMeasuresForState(sharedState) });
+      return;
+    }
+
+    if (requestUrl.pathname === "/api/units-of-measure" && request.method === "POST") {
+      const body = await parseJsonBody(request);
+      const sharedState = await readSharedStateJson();
+      const units = normalizeUnitOfMeasuresForState(sharedState);
+      const name = String(body.name || "").trim();
+      const singular = String(body.singular_name || "").trim().toLowerCase();
+      const plural = String(body.plural_name || "").trim().toLowerCase();
+      if (!name || !singular || !plural) {
+        sendJson(response, 400, { ok: false, error: "Display, singular, and plural names are required." });
+        return;
+      }
+      if (units.some((unit) => unit.name.trim().toLowerCase() === name.toLowerCase())) {
+        sendJson(response, 409, { ok: false, error: "That classification already exists." });
+        return;
+      }
+      const now = new Date().toISOString();
+      const unit = {
+        id: body.id || `UOM-${Date.now()}`,
+        name,
+        singular_name: singular,
+        plural_name: plural,
+        abbreviation: String(body.abbreviation || "").trim(),
+        is_active: body.is_active !== false,
+        sort_order: Number(body.sort_order || ((units.length + 1) * 10)),
+        created_at: now,
+        updated_at: now,
+        created_by: String(body.created_by || "API"),
+      };
+      sharedState.unitOfMeasures = normalizeUnitOfMeasuresForState({ unitOfMeasures: [...units, unit] });
+      await writeSharedStateJson(sharedState);
+      sendJson(response, 201, { ok: true, unit });
+      return;
+    }
+
+    const unitPatchMatch = requestUrl.pathname.match(/^\/api\/units-of-measure\/([^/]+)$/);
+    if (unitPatchMatch && request.method === "PATCH") {
+      const body = await parseJsonBody(request);
+      const sharedState = await readSharedStateJson();
+      const units = normalizeUnitOfMeasuresForState(sharedState);
+      const index = units.findIndex((unit) => unit.id === unitPatchMatch[1]);
+      if (index < 0) {
+        sendJson(response, 404, { ok: false, error: "Classification was not found." });
+        return;
+      }
+      const nextName = body.name !== undefined ? String(body.name || "").trim() : units[index].name;
+      if (units.some((unit) => unit.id !== units[index].id && unit.name.trim().toLowerCase() === nextName.toLowerCase())) {
+        sendJson(response, 409, { ok: false, error: "That classification already exists." });
+        return;
+      }
+      units[index] = {
+        ...units[index],
+        ...body,
+        name: nextName,
+        singular_name: body.singular_name !== undefined ? String(body.singular_name || "").trim().toLowerCase() : units[index].singular_name,
+        plural_name: body.plural_name !== undefined ? String(body.plural_name || "").trim().toLowerCase() : units[index].plural_name,
+        abbreviation: body.abbreviation !== undefined ? String(body.abbreviation || "").trim() : units[index].abbreviation,
+        updated_at: new Date().toISOString(),
+      };
+      sharedState.unitOfMeasures = normalizeUnitOfMeasuresForState({ unitOfMeasures: units });
+      await writeSharedStateJson(sharedState);
+      sendJson(response, 200, { ok: true, unit: units[index] });
       return;
     }
 

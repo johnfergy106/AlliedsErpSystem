@@ -36,3 +36,34 @@ test("production output renders the Purchase Order Number input", async () => {
   assert.match(builtSource, /Purchase Order Number \(Optional\)/);
   assert.match(builtSource, /purchase_order_number: document\.querySelector\("#purchaseOrderNumber"\)\.value\.trim\(\)/);
 });
+
+test("unit of measure dropdown appears on sales order line items", () => {
+  assert.match(appSource, /function lineItemHtml\(item\)/);
+  assert.match(appSource, /Ship As \/ Unit of Measure/);
+  assert.match(appSource, /class="line-uom"/);
+  assert.match(appSource, /data-testid="line-uom-select"/);
+});
+
+test("line items default to Units and save unit ids with snapshots", () => {
+  assert.match(appSource, /defaultUnitOfMeasure\(\)\.id/);
+  assert.match(appSource, /unit_of_measure_id: unit\.id/);
+  assert.match(appSource, /unit_of_measure_snapshot: unitSnapshot\(unit\)/);
+});
+
+test("new classification can be added from the dropdown and duplicate names are rejected", () => {
+  assert.match(appSource, /\+ Add New Classification/);
+  assert.match(appSource, /function promptForUnitOfMeasure/);
+  assert.match(appSource, /duplicate = state\.unitOfMeasures\.find/);
+  assert.match(appSource, /toLowerCase\(\) === name\.toLowerCase\(\)/);
+});
+
+test("inactive classifications are hidden from new choices but retained for current lines", () => {
+  assert.match(appSource, /unit\.is_active !== false \|\| unit\.id === currentId/);
+});
+
+test("unit correction review can accept or reject without automatic overwrite", () => {
+  assert.match(appSource, /change\.field === "unit_of_measure"/);
+  assert.match(appSource, /order\.items\[lineIndex\]\.unit_of_measure_id = unit\.id/);
+  assert.match(appSource, /Accept Change/);
+  assert.match(appSource, /Reject Change/);
+});

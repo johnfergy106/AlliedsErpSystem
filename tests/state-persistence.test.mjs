@@ -84,6 +84,22 @@ async function postVapiCall(body) {
   return response.json();
 }
 
+async function getUnitsOfMeasure() {
+  const response = await fetch(`http://127.0.0.1:${appPort}/api/units-of-measure`);
+  const text = await response.text();
+  assert.equal(response.ok, true, text);
+  return JSON.parse(text);
+}
+
+async function postUnitOfMeasure(body) {
+  const response = await fetch(`http://127.0.0.1:${appPort}/api/units-of-measure`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return { response, body: await response.json().catch(() => ({})) };
+}
+
 function vapiWebhook({ callId, orderId, outcome, transcript, endedReason = "customer-ended-call", status = "ended", structuredData = null }) {
   return {
     type: "end-of-call-report",
@@ -396,6 +412,35 @@ test("Vapi outbound call receives purchase_order_number safely", async () => {
   assert.equal(vapiPostedCalls[1].assistantOverrides.variableValues.purchase_order_number, "");
 });
 
+test("Unit of Measure API seeds defaults, adds records, and rejects duplicate names", async () => {
+  const seeded = await getUnitsOfMeasure();
+  assert.equal(seeded.units.some((unit) => unit.name === "Units"), true);
+  assert.equal(seeded.units.some((unit) => unit.name === "Cases"), true);
+  assert.equal(seeded.units.some((unit) => unit.name === "Rolls"), true);
+  assert.equal(seeded.units.some((unit) => unit.name === "Coils"), true);
+  assert.equal(seeded.units.some((unit) => unit.name === "Boxes"), true);
+
+  const created = await postUnitOfMeasure({ name: "Totes", singular_name: "tote", plural_name: "totes", abbreviation: "TT" });
+  assert.equal(created.response.status, 201);
+  assert.equal(created.body.unit.name, "Totes");
+
+  const duplicate = await postUnitOfMeasure({ name: "totes", singular_name: "tote", plural_name: "totes" });
+  assert.equal(duplicate.response.status, 409);
+});
+
+test("existing line items default safely to Units and retain inactive classifications", async () => {
+  await postState({
+    unitOfMeasures: [{ id: "UOM-OLD", name: "Old Cases", singular_name: "old case", plural_name: "old cases", abbreviation: "OC", is_active: false, sort_order: 999 }],
+    orders: [
+      { id: "SO-UOM-DEFAULT", customerId: "C-UOM", rep: "Jordan Lee", items: [{ productId: "P-1", qty: 2, price: 1 }] },
+      { id: "SO-UOM-INACTIVE", customerId: "C-UOM", rep: "Jordan Lee", items: [{ productId: "P-1", qty: 2, price: 1, unit_of_measure_id: "UOM-OLD" }] },
+    ],
+  });
+  const state = await getState();
+  assert.equal(state.orders.find((order) => order.id === "SO-UOM-DEFAULT").items[0].unit_of_measure_id, "UOM-UNITS");
+  assert.equal(state.orders.find((order) => order.id === "SO-UOM-INACTIVE").items[0].unit_of_measure_id, "UOM-OLD");
+});
+
 test("Vapi verified webhook updates order once and ignores duplicates", async () => {
   await postState({
     orders: [{
@@ -557,6 +602,46 @@ test("Vapi PO confirmation is saved in notes without flagging a correction", asy
   assert.equal(order.has_vapi_changes, undefined);
   assert.equal(order.customerChangeRequests, undefined);
   assert.equal(order.vapiNotes[0].purchase_order_note, "Purchase Order Number confirmed: PO-45821.");
+});
+
+test("Vapi unit classification correction flags order and creates pending change request", async () => {
+  await postState({
+    products: [{ id: "P-GLOVES", name: "Nitrile Gloves", sku: "GLV" }],
+    orders: [{
+      id: "SO-VAPI-UOM-CORRECT",
+      customerId: "C-VAPI",
+      rep: "Jordan Lee",
+      status: "verification_in_progress",
+      items: [{ productId: "P-GLOVES", qty: 4, price: 10, unit_of_measure_id: "UOM-CASES" }],
+      verification: { vapiCallId: "call_uom_correct_1", state: "verification_in_progress", method: "Assistant" },
+    }],
+  });
+
+  await postVapiWebhook(vapiStructuredOutputWebhook({
+    callId: "call_uom_correct_1",
+    orderId: "SO-VAPI-UOM-CORRECT",
+    result: {
+      verification_outcome: "VERIFIED",
+      summary: "Buyer confirmed the order but corrected the classification.",
+      changes_reported: true,
+      change_summary: "Nitrile Gloves should be boxes, not cases.",
+      unit_classification_changed: true,
+      unit_classification_changes: "Nitrile Gloves changed from cases to boxes.",
+    },
+  }));
+
+  const state = await getState();
+  const order = state.orders.find((item) => item.id === "SO-VAPI-UOM-CORRECT");
+  assert.equal(order.items[0].unit_of_measure_id, "UOM-CASES");
+  assert.equal(order.has_vapi_changes, true);
+  assert.equal(order.customerChangeRequests.length, 1);
+  assert.equal(order.customerChangeRequests[0].field, "unit_of_measure");
+  assert.equal(order.customerChangeRequests[0].product_name, "Nitrile Gloves");
+  assert.equal(order.customerChangeRequests[0].current_value, "Cases");
+  assert.equal(order.customerChangeRequests[0].customer_value, "Boxes");
+  assert.equal(order.customerChangeRequests[0].requested_unit_of_measure_id, "UOM-BOXES");
+  assert.equal(order.vapiNotes[0].unit_classification_changed, true);
+  assert.match(order.vapiNotes[0].verified_items, /4 cases of Nitrile Gloves/);
 });
 
 test("Vapi status-update in-progress keeps the order calling without finalizing", async () => {

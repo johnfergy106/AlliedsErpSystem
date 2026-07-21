@@ -215,3 +215,33 @@ test("provides the order total as a separate reference variable", async () => {
   assert.equal(values.order_total, "$97.50");
   assert.doesNotMatch(values.order_items, /\$97\.50/);
 });
+
+test("Vapi order_items uses selected unit classifications", async () => {
+  const values = await sendOrder(baseOrder({
+    total: 50,
+    items: [
+      { name: "Nitrile Gloves", orderedQty: 4, unit_of_measure: { singular_name: "case", plural_name: "cases" } },
+      { name: "Packing Material", orderedQty: 2, unit_of_measure: { singular_name: "roll", plural_name: "rolls" } },
+      { name: "Copper Wire", orderedQty: 1, unit_of_measure: { singular_name: "coil", plural_name: "coils" } },
+      { name: "Fasteners", orderedQty: 3, unit_of_measure: { singular_name: "box", plural_name: "boxes" } },
+    ],
+  }));
+  assert.match(values.order_items, /4 cases of Nitrile Gloves/);
+  assert.match(values.order_items, /2 rolls of Packing Material/);
+  assert.match(values.order_items, /1 coil of Copper Wire/);
+  assert.match(values.order_items, /3 boxes of Fasteners/);
+  assert.doesNotMatch(values.order_items, /units of cases|units of rolls|units of boxes/i);
+});
+
+test("Vapi grammar uses singular and plural classification names", async () => {
+  const values = await sendOrder(baseOrder({
+    items: [
+      { name: "Nitrile Gloves", orderedQty: 1, unit_of_measure: { singular_name: "case", plural_name: "cases" } },
+      { name: "Nitrile Gloves", orderedQty: 4, unit_of_measure: { singular_name: "case", plural_name: "cases" } },
+      { name: "Small Part", orderedQty: 4, unit_of_measure: { singular_name: "each", plural_name: "each" } },
+    ],
+  }));
+  assert.match(values.order_items, /1 case of Nitrile Gloves/);
+  assert.match(values.order_items, /4 cases of Nitrile Gloves/);
+  assert.match(values.order_items, /4 each of Small Part/);
+});
