@@ -216,6 +216,30 @@ test("provides the order total as a separate reference variable", async () => {
   assert.doesNotMatch(values.order_items, /\$97\.50/);
 });
 
+test("Vapi receives sales order account number before customer account number", async () => {
+  const values = await sendOrder(baseOrder({
+    accountNumber: "SO-ACCT-001",
+    customer: { name: "Baxter Machine Works", contact: "Mia Turner", account_number: "CUST-ACCT-999" },
+  }));
+  assert.equal(values.account_number, "SO-ACCT-001");
+});
+
+test("Vapi falls back to customer account number and preserves leading zeros", async () => {
+  const values = await sendOrder(baseOrder({
+    accountNumber: "",
+    customer: { name: "Baxter Machine Works", contact: "Mia Turner", account_number: "001-23456" },
+  }));
+  assert.equal(values.account_number, "001-23456");
+});
+
+test("Vapi sends empty string when account numbers are missing", async () => {
+  const values = await sendOrder(baseOrder({
+    accountNumber: "",
+    customer: { name: "Baxter Machine Works", contact: "Mia Turner" },
+  }));
+  assert.equal(values.account_number, "");
+});
+
 test("Vapi order_items uses selected unit classifications", async () => {
   const values = await sendOrder(baseOrder({
     total: 50,

@@ -306,6 +306,20 @@ test("new customers remain saved while old deleted customer ids stay blocked", a
   assert.equal(state.customers.some((customer) => customer.id === "C-1002" && customer.name === "New Customer"), true);
 });
 
+test("customer account numbers persist and preserve leading zeros", async () => {
+  await postState({
+    customers: [{ id: "C-ACCT", name: "Account Customer", account_number: "001-23456" }],
+  });
+  let state = await getState();
+  assert.equal(state.customers.find((customer) => customer.id === "C-ACCT").account_number, "001-23456");
+
+  await postState({
+    customers: [{ id: "C-ACCT", name: "Account Customer", accountNumber: "0007/ABC" }],
+  });
+  state = await getState();
+  assert.equal(state.customers.find((customer) => customer.id === "C-ACCT").account_number, "0007/ABC");
+});
+
 test("deleted sales orders are hidden for one user instead of removed globally", async () => {
   await postState({
     orders: [{ id: "SO-HIDDEN", customerId: "C-9", rep: "Jordan Lee" }],

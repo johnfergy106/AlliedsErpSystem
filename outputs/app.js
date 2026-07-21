@@ -31,9 +31,9 @@ const seedData = {
     { id: "P-1005", sku: "CUT-WHL-045", name: "4.5 in Cut-Off Wheels, 25 Pack", category: "Abrasives", price: 31.75, stock: 88 },
   ],
   customers: [
-    { id: "C-2101", name: "Baxter Machine Works", contact: "Mia Turner", email: "purchasing@baxtermw.example", phone: "216-555-0184", address: "1420 Foundry Park Dr", city: "Cleveland", state: "OH", zip: "44114", promoNumber: "AIS-10", purchaseOrder: "PO-77821", terms: "Net 30" },
-    { id: "C-2102", name: "North Valley Fabrication", contact: "Evan Cho", email: "orders@nvfab.example", phone: "559-555-0138", address: "88 Industrial Loop", city: "Fresno", state: "CA", zip: "93725", promoNumber: "WELD-25", purchaseOrder: "PO-44018", terms: "Net 15" },
-    { id: "C-2103", name: "Westshore Packaging", contact: "Renee Patel", email: "maintenance@westshorepkg.example", phone: "253-555-0197", address: "501 Harbor Way", city: "Tacoma", state: "WA", zip: "98421", promoNumber: "MRO-05", purchaseOrder: "PO-98204", terms: "Net 45" },
+    { id: "C-2101", name: "Baxter Machine Works", account_number: "BAx-2101", contact: "Mia Turner", email: "purchasing@baxtermw.example", phone: "216-555-0184", address: "1420 Foundry Park Dr", city: "Cleveland", state: "OH", zip: "44114", promoNumber: "AIS-10", purchaseOrder: "PO-77821", terms: "Net 30" },
+    { id: "C-2102", name: "North Valley Fabrication", account_number: "NVF-2102", contact: "Evan Cho", email: "orders@nvfab.example", phone: "559-555-0138", address: "88 Industrial Loop", city: "Fresno", state: "CA", zip: "93725", promoNumber: "WELD-25", purchaseOrder: "PO-44018", terms: "Net 15" },
+    { id: "C-2103", name: "Westshore Packaging", account_number: "WSP-2103", contact: "Renee Patel", email: "maintenance@westshorepkg.example", phone: "253-555-0197", address: "501 Harbor Way", city: "Tacoma", state: "WA", zip: "98421", promoNumber: "MRO-05", purchaseOrder: "PO-98204", terms: "Net 45" },
   ],
   orders: [
     {
@@ -172,7 +172,12 @@ function normalizeState(data) {
   data.deletedOrders = [];
   data.users = (data.users || []).map((user) => (user.username === "admin" ? { ...user, role: "super_admin" } : user));
   data.users = data.users.filter((user) => !data.deletedUsers.includes(user.username) || user.role === "super_admin");
-  data.customers = (data.customers || []).filter((customer) => !data.deletedCustomers.includes(customer.id));
+  data.customers = (data.customers || [])
+    .filter((customer) => !data.deletedCustomers.includes(customer.id))
+    .map((customer) => ({
+      ...customer,
+      account_number: String(customer.account_number || customer.accountNumber || "").trim(),
+    }));
   data.products = (data.products || []).filter((product) => !data.deletedProducts.includes(product.id));
   data.orders = (data.orders || []).map((order) => {
     const status = order.status || "pending";
@@ -500,6 +505,10 @@ function orderBuyerName(order) {
 
 function purchaseOrderNumber(order = {}) {
   return String(order.purchase_order_number || order.purchaseOrderNumber || order.purchaseOrder || "").trim();
+}
+
+function customerAccountNumber(customer = {}) {
+  return String(customer?.account_number || customer?.accountNumber || "").trim();
 }
 
 function orderPartLabel(order) {
@@ -1944,7 +1953,7 @@ function productsView() {
 function customersView() {
   const query = search.toLowerCase();
   const rows = visibleCustomers().filter((customer) =>
-    `${customer.name} ${customer.contact} ${customer.email} ${customer.phone} ${customer.address} ${customer.city} ${customer.state} ${customer.zip} ${customer.promoNumber} ${customer.purchaseOrder} ${customer.terms}`.toLowerCase().includes(query)
+    `${customer.name} ${customerAccountNumber(customer)} ${customer.contact} ${customer.email} ${customer.phone} ${customer.address} ${customer.city} ${customer.state} ${customer.zip} ${customer.promoNumber} ${customer.purchaseOrder} ${customer.terms}`.toLowerCase().includes(query)
   );
   return `
     <div class="panel">
@@ -1954,12 +1963,13 @@ function customersView() {
       </div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th></th><th>Customer</th><th>Contact</th><th>Address</th><th>Promo #</th><th>Purchase Order</th><th>Terms</th><th>Actions</th></tr></thead>
+          <thead><tr><th></th><th>Customer</th><th>Account #</th><th>Contact</th><th>Address</th><th>Promo #</th><th>Purchase Order</th><th>Terms</th><th>Actions</th></tr></thead>
           <tbody>${rows
             .map(
               (customer) => `<tr>
                 <td><input class="customer-select" type="checkbox" value="${html(customer.id)}" /></td>
                 <td><strong>${html(customer.name)}</strong></td>
+                <td>${html(customerAccountNumber(customer) || "Not provided")}</td>
                 <td>${html(customer.contact)}<div class="metric-note">${html(customer.email)}</div><div class="metric-note">${html(customer.phone || "")}</div><div class="metric-note">${html(customer.cellPhone || "")}</div></td>
                 <td>${html(customer.address)}<div class="metric-note">${html(customer.city)} ${html(customer.state || "")} ${html(customer.zip)}</div></td>
                 <td>${html(customer.promoNumber || "")}</td>
@@ -2181,7 +2191,7 @@ function openOrderForm(id = null) {
   const firstProduct = visibleProducts()[0] || state.products[0];
   const order = id
     ? state.orders.find((item) => item.id === id)
-    : { id: uid("SO", state.orders), customerId: firstCustomer?.id, rep: isAdmin() ? "" : currentUser.name, date: new Date().toISOString().slice(0, 10), status: "pending", partNumber: "", purchase_order_number: "", notes: "", items: [{ productId: firstProduct?.id, qty: 1, unit_of_measure_id: defaultUnitOfMeasure().id, unit_of_measure_snapshot: unitSnapshot(defaultUnitOfMeasure()), price: firstProduct?.price || 0 }] };
+    : { id: uid("SO", state.orders), customerId: firstCustomer?.id, rep: isAdmin() ? "" : currentUser.name, date: new Date().toISOString().slice(0, 10), status: "pending", partNumber: "", accountNumber: customerAccountNumber(firstCustomer), purchase_order_number: "", notes: "", items: [{ productId: firstProduct?.id, qty: 1, unit_of_measure_id: defaultUnitOfMeasure().id, unit_of_measure_snapshot: unitSnapshot(defaultUnitOfMeasure()), price: firstProduct?.price || 0 }] };
   openOrderFormFromDraft(order, id);
 }
 
@@ -2284,20 +2294,31 @@ function lineItemHtml(item) {
   const product = productById(item.productId) || products[0];
   const unit = lineUnitOfMeasure(item);
   const unitOptions = activeUnitOptions(unit.id);
+  const price = Number(item.price || product?.price || 0);
+  const qty = Number(item.qty || 1);
   return `<div class="line-item">
-    <div class="field"><label>Product</label><select class="line-product" onchange="syncLinePrice(this)">${products.map((p) => `<option value="${p.id}" data-price="${p.price}" ${p.id === item.productId ? "selected" : ""}>${html(p.sku)} · ${html(p.name)}</option>`).join("")}</select></div>
-    <div class="field"><label>Qty</label><input class="line-qty" type="number" min="1" value="${html(item.qty)}" /></div>
+    <div class="field line-qty-field"><label>Quantity</label><input class="line-qty" type="number" min="1" value="${html(item.qty)}" oninput="updateLineTotal(this)" /></div>
     <div class="field"><label>Ship As / Unit of Measure</label><select class="line-uom" data-testid="line-uom-select" onchange="handleLineUomChange(this)">${unitOptions.map((uom) => `<option value="${html(uom.id)}" ${uom.id === unit.id ? "selected" : ""}>${html(uom.name)}</option>`).join("")}<option value="__add_uom__">+ Add New Classification</option></select></div>
-    <div class="field"><label>Price</label><input class="line-price" type="number" min="0" step="0.01" value="${html(item.price || product?.price || 0)}" /></div>
-    <button class="icon-btn" title="Remove item" type="button" onclick="this.closest('.line-item').remove()">×</button>
+    <div class="field line-product-field"><label>Product</label><select class="line-product" onchange="syncLinePrice(this)">${products.map((p) => `<option value="${p.id}" data-price="${p.price}" ${p.id === item.productId ? "selected" : ""}>${html(p.sku)} - ${html(p.name)}</option>`).join("")}</select></div>
+    <div class="field line-price-field"><label>Unit Price</label><input class="line-price" data-testid="sales-order-unit-price-input" type="number" min="0" step="0.01" value="${html(price)}" oninput="updateLineTotal(this)" /></div>
+    <div class="field line-total-field"><label>Line Total</label><output class="line-total">${money.format(qty * price)}</output></div>
+    <button class="icon-btn line-remove" title="Remove item" type="button" onclick="this.closest('.line-item').remove()">x</button>
   </div>`;
 }
 
 function syncLinePrice(select) {
   const price = select.selectedOptions[0].dataset.price;
   select.closest(".line-item").querySelector(".line-price").value = price;
+  updateLineTotal(select);
 }
 
+function updateLineTotal(control) {
+  const row = control.closest(".line-item");
+  const qty = Number(row.querySelector(".line-qty")?.value || 0);
+  const price = Number(row.querySelector(".line-price")?.value || 0);
+  const total = row.querySelector(".line-total");
+  if (total) total.textContent = money.format(qty * price);
+}
 function addLineItem() {
   const product = visibleProducts()[0] || state.products[0];
   const unit = defaultUnitOfMeasure();
@@ -2391,6 +2412,8 @@ function handleOrderCustomerChange() {
 function loadCustomerAddress() {
   const customer = customerById(document.querySelector("#orderCustomer").value);
   const address = customerAddress(customer);
+  const accountInput = document.querySelector("#accountNumber");
+  if (accountInput && !accountInput.value.trim()) accountInput.value = customerAccountNumber(customer);
   document.querySelector("#orderAddress").value = address.address;
   document.querySelector("#orderCity").value = address.city;
   document.querySelector("#orderState").value = address.state;
@@ -2658,7 +2681,7 @@ function deleteProduct(productId) {
 }
 
 function openCustomerForm(id = null) {
-  const customer = id ? customerById(id) : { id: uid("C", state.customers), name: "", contact: "", email: "", phone: "", cellPhone: "", preferredPhone: "phone", address: "", city: "", state: "", zip: "", promoNumber: "", purchaseOrder: "", terms: "Net 30" };
+  const customer = id ? customerById(id) : { id: uid("C", state.customers), name: "", account_number: "", contact: "", email: "", phone: "", cellPhone: "", preferredPhone: "phone", address: "", city: "", state: "", zip: "", promoNumber: "", purchaseOrder: "", terms: "Net 30" };
   if (id && !canAccessCustomer(id)) {
     toast("You can only open customers assigned to your sales account.");
     return;
@@ -2669,6 +2692,7 @@ function openCustomerForm(id = null) {
       <div class="panel-body form-grid">
         <input id="customerId" type="hidden" value="${html(customer.id)}" />
         <div class="field full"><label>Company Name</label><input id="customerName" value="${html(customer.name)}" required /></div>
+        <div class="field"><label>Account Number (Optional)</label><input id="customerAccountNumber" data-testid="customer-account-number-input" value="${html(customerAccountNumber(customer))}" maxlength="100" placeholder="Customer account number" /></div>
         <div class="field"><label>Contact</label><input id="customerContact" value="${html(customer.contact)}" required /></div>
         <div class="field"><label>Email (Optional)</label><input id="customerEmail" type="email" value="${html(customer.email)}" /></div>
         <div class="field"><label>Phone</label><input id="customerPhone" value="${html(customer.phone || "")}" required /></div>
@@ -2695,6 +2719,7 @@ function saveCustomer(event) {
   const customer = {
     id: customerId,
     name: document.querySelector("#customerName").value.trim(),
+    account_number: document.querySelector("#customerAccountNumber").value.trim(),
     contact: document.querySelector("#customerContact").value.trim(),
     email: document.querySelector("#customerEmail").value.trim(),
     phone: document.querySelector("#customerPhone").value.trim(),
@@ -2745,6 +2770,7 @@ function openOrderFormForCustomer(customerId) {
     phone: customer?.phone || "",
     cellPhone: customer?.cellPhone || "",
     preferredPhone: customer?.preferredPhone || "phone",
+    accountNumber: customerAccountNumber(customer),
     address: customerAddress(customer),
     items: [{ productId: firstProduct?.id, qty: 1, unit_of_measure_id: defaultUnitOfMeasure().id, unit_of_measure_snapshot: unitSnapshot(defaultUnitOfMeasure()), price: firstProduct?.price || 0 }],
   };
@@ -2876,7 +2902,7 @@ function buildVerificationPayload(order) {
       salesRep: order.rep,
       buyerName: orderBuyerName(order),
       customer,
-      accountNumber: order.accountNumber || "",
+      accountNumber: order.accountNumber || customerAccountNumber(customer),
       purchase_order_number: purchaseOrderNumber(order),
       accountStatus: order.accountStatus || "old",
       shipDate: order.shipDate || "",

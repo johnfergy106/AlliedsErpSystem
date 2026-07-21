@@ -110,6 +110,10 @@ function migrateSharedState(state = {}) {
   return {
     ...state,
     unitOfMeasures,
+    customers: Array.isArray(state.customers) ? state.customers.map((customer) => ({
+      ...customer,
+      account_number: String(customer.account_number || customer.accountNumber || "").trim(),
+    })) : state.customers,
     orders: Array.isArray(state.orders) ? state.orders.map((order) => ({
       ...order,
       purchase_order_number: purchaseOrderNumber(order) || "",
@@ -1464,6 +1468,10 @@ function purchaseOrderNumber(order = {}, customer = {}) {
   return String(order.purchase_order_number || order.purchaseOrderNumber || order.purchaseOrder || customer.purchaseOrder || "").trim();
 }
 
+function accountNumber(order = {}, customer = {}) {
+  return String(order.accountNumber || order.account_number || customer.account_number || customer.accountNumber || "").trim();
+}
+
 function creditCardOnFile(order = {}) {
   return Boolean(order.creditCardOnFile || order.creditCard?.name || order.creditCard?.last4 || order.creditCard?.expiration) ? "Yes" : "";
 }
@@ -1489,7 +1497,7 @@ function buildVapiVariableValues(requestBody) {
     sku_list: skuListSentence(items),
     unit_price_details: unitPriceDetailsSentence(items),
     line_total_details: lineTotalDetailsSentence(items),
-    account_number: order.accountNumber || "",
+    account_number: accountNumber(order, customer),
     account_status: order.accountStatus || "",
     purchase_order_number: purchaseOrderNumber(order, customer),
     billing_address: billingAddress(order),
@@ -1657,6 +1665,7 @@ const server = createServer(async (request, response) => {
 
       console.log(`[vapi] creating outbound call for order ${orderId} to ${maskPhoneNumber(customerPhoneNumber)}`);
       const variableValues = buildVapiVariableValues(requestBody);
+      console.log(`[vapi-call] order=${orderId} account_number_present=${Boolean(variableValues.account_number)}`);
       const vapiPayload = {
         assistantId,
         phoneNumberId,

@@ -779,9 +779,42 @@ button:focus {
 
 .line-item {
   display: grid;
-  grid-template-columns: minmax(170px, 1fr) 92px 110px 42px;
+  grid-template-columns:
+    minmax(90px, 0.7fr)
+    minmax(150px, 1fr)
+    minmax(240px, 2.5fr)
+    minmax(140px, 1fr)
+    minmax(130px, 1fr)
+    48px;
   gap: 10px;
   align-items: end;
+  width: 100%;
+}
+
+.line-item > * {
+  min-width: 0;
+}
+
+.line-price {
+  min-width: 120px;
+  width: 100%;
+}
+
+.line-total {
+  min-height: 39px;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #f8fafb;
+  color: var(--ink);
+  padding: 9px 10px;
+  font-weight: 700;
+}
+
+.line-remove {
+  align-self: end;
 }
 
 .totals {
@@ -1182,6 +1215,14 @@ button:focus {
   .split {
     grid-template-columns: 1fr;
   }
+
+  .line-item {
+    grid-template-columns: minmax(84px, 0.7fr) minmax(150px, 1fr) minmax(140px, 1fr) minmax(130px, 1fr) 48px;
+  }
+
+  .line-product-field {
+    grid-column: 1 / -1;
+  }
 }
 
 @media (max-width: 680px) {
@@ -1201,7 +1242,15 @@ button:focus {
   }
 
   .line-item {
-    grid-template-columns: 1fr 84px 98px 38px;
+    grid-template-columns: 1fr;
+  }
+
+  .line-product-field {
+    grid-column: auto;
+  }
+
+  .line-remove {
+    width: 44px;
   }
 
   .chat-compose {
