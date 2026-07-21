@@ -108,6 +108,8 @@ let editingProductId = null;
 let editingCustomerId = null;
 let search = "";
 let statusFilter = "all";
+let orderPage = 1;
+let orderPageSize = 25;
 let deferredInstallPrompt = null;
 let returnToOrderAfterCustomerSave = false;
 let stateSaveTimer = null;
@@ -446,9 +448,19 @@ function filteredOrders(orders) {
   return orders.filter((order) => order.status === statusFilter);
 }
 
+function orderSortValue(order = {}) {
+  const parsed = Date.parse(order.createdAt || order.updatedAt || order.statusChangedAt || order.date || "");
+  const numericId = Number(String(order.id || "").replace(/\D/g, ""));
+  return (Number.isFinite(parsed) ? parsed : 0) * 100000 + (Number.isFinite(numericId) ? numericId : 0);
+}
+
+function newestOrdersFirst(orders = []) {
+  return [...orders].sort((a, b) => orderSortValue(b) - orderSortValue(a) || String(b.id || "").localeCompare(String(a.id || "")));
+}
+
 function statusFilterControl() {
   const statuses = [["all", "All Statuses"], ...Object.entries(statusLabels())];
-  return `<select class="status-filter" title="Filter by status" onchange="statusFilter=this.value;render()">${statuses.map(([value, label]) => `<option value="${value}" ${statusFilter === value ? "selected" : ""}>${label}</option>`).join("")}</select>`;
+  return `<select class="status-filter" title="Filter by status" onchange="statusFilter=this.value;orderPage=1;render()">${statuses.map(([value, label]) => `<option value="${value}" ${statusFilter === value ? "selected" : ""}>${label}</option>`).join("")}</select>`;
 }
 
 function uid(prefix, existing) {
@@ -843,7 +855,7 @@ function dashboardView() {
   const revenue = orders.reduce((sum, order) => sum + orderTotal(order), 0);
   const verified = orders.filter((order) => order.status === "verified").length;
   const toShip = orders.filter((order) => order.status === "sent_to_shipping").length;
-  const recent = [...orders].sort((a, b) => b.id.localeCompare(a.id)).slice(0, 5);
+  const recent = newestOrdersFirst(orders).slice(0, 5);
 
   return `
     <div class="grid metrics">
@@ -883,17 +895,33 @@ function verificationQueue() {
 
 function ordersView() {
   const query = search.toLowerCase();
-  const rows = filteredOrders(visibleOrders()).filter((order) => {
+  const rows = newestOrdersFirst(filteredOrders(visibleOrders()).filter((order) => {
     const customer = customerById(order.customerId);
-    return `${order.id} ${customer?.name} ${order.rep} ${order.status}`.toLowerCase().includes(query);
-  });
+    return `${order.id} ${customer?.name} ${order.rep} ${order.status} ${order.notes || ""} ${displayOrderNumber(order)}`.toLowerCase().includes(query);
+  }));
+  const total = rows.length;
+  const totalPages = Math.max(1, Math.ceil(total / orderPageSize));
+  if (orderPage > totalPages) orderPage = totalPages;
+  if (orderPage < 1) orderPage = 1;
+  const start = total ? (orderPage - 1) * orderPageSize : 0;
+  const pageRows = rows.slice(start, start + orderPageSize);
+  const showingStart = total ? start + 1 : 0;
+  const showingEnd = Math.min(start + orderPageSize, total);
   return `
     <div class="panel">
       <div class="panel-head">
         <h2 class="panel-title">Customer Order List</h2>
-        <div class="toolbar">${statusFilterControl()}<button class="btn" onclick="toggleAll('.order-select', true)">Select All</button><button class="btn danger" onclick="deleteSelectedOrders()">Delete Selected</button><input class="search" placeholder="Search orders" value="${html(search)}" oninput="search=this.value;render()" /></div>
+        <div class="toolbar">${statusFilterControl()}<label class="compact-select">Show <select onchange="orderPageSize=Number(this.value);orderPage=1;render()">${[25, 50, 100].map((size) => `<option value="${size}" ${orderPageSize === size ? "selected" : ""}>${size}</option>`).join("")}</select></label><button class="btn" onclick="toggleAll('.order-select', true)">Select All</button><button class="btn danger" onclick="deleteSelectedOrders()">Delete Selected</button><input class="search" placeholder="Search orders" value="${html(search)}" oninput="search=this.value;orderPage=1;render()" /></div>
       </div>
-      <div class="table-wrap">${ordersTable(rows, true)}</div>
+      <div class="pagination-bar">
+        <span>Showing ${showingStart}-${showingEnd} of ${total} orders</span>
+        <div class="pagination-actions">
+          <button class="btn" onclick="orderPage=Math.max(1,orderPage-1);render()" ${orderPage <= 1 ? "disabled" : ""}>Previous</button>
+          <span>Page ${orderPage} of ${totalPages}</span>
+          <button class="btn" onclick="orderPage=Math.min(${totalPages},orderPage+1);render()" ${orderPage >= totalPages ? "disabled" : ""}>Next</button>
+        </div>
+      </div>
+      <div class="table-wrap">${ordersTable(pageRows, true)}</div>
     </div>
   `;
 }
@@ -2455,6 +2483,7 @@ function saveOrder(event) {
   const selectedCustomer = customerById(document.querySelector("#orderCustomer").value);
   const formPartNumber = Number(document.querySelector("#orderPartNumber")?.value || 0);
   const savedPartNumber = saveAction === "addPart" && !formPartNumber ? 1 : formPartNumber || existingOrder?.partNumber || "";
+  const now = new Date().toISOString();
   const order = {
     id: orderId,
     customerId: document.querySelector("#orderCustomer").value,
@@ -2498,6 +2527,8 @@ function saveOrder(event) {
       zip: document.querySelector("#orderZip").value.trim(),
     },
     status: existingOrder?.status || "pending",
+    createdAt: existingOrder?.createdAt || now,
+    updatedAt: now,
     notes: document.querySelector("#orderNotes").value.trim(),
     items,
     verification: existingOrder?.verification || null,
@@ -2542,7 +2573,11 @@ function saveOrder(event) {
   }
   const index = state.orders.findIndex((item) => item.id === order.id);
   if (index >= 0) state.orders[index] = { ...state.orders[index], ...order };
-  else state.orders.unshift(order);
+  else {
+    state.orders.unshift(order);
+    console.log(`[sales-order-create] created id=${order.id} order=${order.creditOrderNumber || order.id}`);
+    console.log(`[sales-order-create] total_orders=${state.orders.length}`);
+  }
   saveState();
   closeModal();
   setView("orders");

@@ -91,6 +91,15 @@ async function getUnitsOfMeasure() {
   return JSON.parse(text);
 }
 
+async function getSalesOrders(params = {}) {
+  const url = new URL(`http://127.0.0.1:${appPort}/api/sales-orders`);
+  Object.entries(params).forEach(([key, value]) => url.searchParams.set(key, value));
+  const response = await fetch(url);
+  const text = await response.text();
+  assert.equal(response.ok, true, text);
+  return JSON.parse(text);
+}
+
 async function postUnitOfMeasure(body) {
   const response = await fetch(`http://127.0.0.1:${appPort}/api/units-of-measure`, {
     method: "POST",
@@ -318,6 +327,49 @@ test("customer account numbers persist and preserve leading zeros", async () => 
   });
   state = await getState();
   assert.equal(state.customers.find((customer) => customer.id === "C-ACCT").account_number, "0007/ABC");
+});
+
+test("creating a sixth sales order does not delete the first five", async () => {
+  const orders = Array.from({ length: 5 }, (_, index) => ({
+    id: `SO-LIMIT-${index + 1}`,
+    customerId: "C-LIMIT",
+    rep: "Jordan Lee",
+    date: `2026-07-${String(index + 1).padStart(2, "0")}`,
+  }));
+  await postState({ orders, customers: [{ id: "C-LIMIT", name: "Limit Customer" }] });
+  await postState({ orders: [...orders, { id: "SO-LIMIT-6", customerId: "C-LIMIT", rep: "Jordan Lee", date: "2026-07-06" }] });
+  const state = await getState();
+  const ids = state.orders.filter((order) => order.id.startsWith("SO-LIMIT-")).map((order) => order.id).sort();
+  assert.deepEqual(ids, ["SO-LIMIT-1", "SO-LIMIT-2", "SO-LIMIT-3", "SO-LIMIT-4", "SO-LIMIT-5", "SO-LIMIT-6"]);
+});
+
+test("ten and fifty sales orders remain available with pagination and search", async () => {
+  const orders = Array.from({ length: 50 }, (_, index) => ({
+    id: `SO-BULK-${String(index + 1).padStart(3, "0")}`,
+    customerId: "C-BULK",
+    rep: "Jordan Lee",
+    status: "pending",
+    date: `2026-07-${String((index % 28) + 1).padStart(2, "0")}`,
+    notes: index === 42 ? "outside first page search target" : "",
+  }));
+  await postState({ orders, customers: [{ id: "C-BULK", name: "Bulk Customer" }] });
+  const state = await getState();
+  const bulkOrders = state.orders.filter((order) => order.id.startsWith("SO-BULK-"));
+  assert.equal(bulkOrders.length, 50);
+  assert.equal(bulkOrders.some((order) => order.id === "SO-BULK-001"), true);
+  assert.equal(bulkOrders.some((order) => order.id === "SO-BULK-010"), true);
+  assert.equal(bulkOrders.some((order) => order.id === "SO-BULK-050"), true);
+
+  const pageOne = await getSalesOrders({ page: 1, page_size: 25, search: "SO-BULK" });
+  assert.equal(pageOne.total >= 50, true);
+  assert.equal(pageOne.items.length, 25);
+  const pageTwo = await getSalesOrders({ page: 2, page_size: 25, search: "SO-BULK" });
+  assert.equal(pageTwo.items.length >= 25, true);
+  assert.equal(pageTwo.items.some((order) => order.id === "SO-BULK-001"), true);
+
+  const searchResult = await getSalesOrders({ page: 1, page_size: 25, search: "outside first page search target" });
+  assert.equal(searchResult.total, 1);
+  assert.equal(searchResult.items[0].id, "SO-BULK-043");
 });
 
 test("deleted sales orders are hidden for one user instead of removed globally", async () => {

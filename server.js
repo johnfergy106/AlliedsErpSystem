@@ -257,6 +257,37 @@ function orderRank(order = {}) {
   return statusRank[order.status] || 0;
 }
 
+function orderSortValue(order = {}) {
+  const parsed = Date.parse(order.createdAt || order.updatedAt || order.statusChangedAt || order.date || "");
+  const numericId = Number(String(order.id || "").replace(/\D/g, ""));
+  return (Number.isFinite(parsed) ? parsed : 0) * 100000 + (Number.isFinite(numericId) ? numericId : 0);
+}
+
+function newestOrdersFirst(orders = []) {
+  return [...orders].sort((a, b) => orderSortValue(b) - orderSortValue(a) || String(b.id || "").localeCompare(String(a.id || "")));
+}
+
+function paginateOrders(orders = [], { page = 1, pageSize = 25, search = "", status = "all" } = {}) {
+  const safePageSize = [25, 50, 100].includes(Number(pageSize)) ? Number(pageSize) : 25;
+  const query = String(search || "").trim().toLowerCase();
+  const filtered = newestOrdersFirst(orders).filter((order) => {
+    const matchesStatus = !status || status === "all" || order.status === status;
+    const haystack = `${order.id || ""} ${order.creditOrderNumber || ""} ${order.customerId || ""} ${order.rep || ""} ${order.status || ""} ${order.notes || ""}`.toLowerCase();
+    return matchesStatus && (!query || haystack.includes(query));
+  });
+  const total = filtered.length;
+  const totalPages = Math.max(1, Math.ceil(total / safePageSize));
+  const safePage = Math.min(Math.max(1, Number(page) || 1), totalPages);
+  const start = (safePage - 1) * safePageSize;
+  return {
+    items: filtered.slice(start, start + safePageSize),
+    page: safePage,
+    page_size: safePageSize,
+    total,
+    total_pages: totalPages,
+  };
+}
+
 function mergeStatusHistory(...orders) {
   const history = new Map();
   orders.flatMap((order) => (Array.isArray(order?.statusHistory) ? order.statusHistory : [])).forEach((entry) => {
@@ -1534,13 +1565,36 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (requestUrl.pathname === "/api/sales-orders" && request.method === "GET") {
+      const sharedState = await readSharedStateJson();
+      const result = paginateOrders(Array.isArray(sharedState.orders) ? sharedState.orders : [], {
+        page: requestUrl.searchParams.get("page"),
+        pageSize: requestUrl.searchParams.get("page_size"),
+        search: requestUrl.searchParams.get("search"),
+        status: requestUrl.searchParams.get("status") || "all",
+      });
+      console.log(`[sales-order-list] page=${result.page} page_size=${result.page_size} total=${result.total} returned=${result.items.length}`);
+      sendJson(response, 200, result);
+      return;
+    }
+
     if (requestUrl.pathname === "/api/state" && request.method === "POST") {
       const incomingState = await parseJsonBody(request);
       const existingState = await readSharedStateJson();
+      const existingOrders = Array.isArray(existingState.orders) ? existingState.orders : [];
+      const incomingOrders = Array.isArray(incomingState.orders) ? incomingState.orders : [];
+      const existingIds = new Set(existingOrders.map((order) => String(order.id || "")));
+      incomingOrders.filter((order) => order?.id && !existingIds.has(String(order.id))).forEach((order) => {
+        console.log(`[sales-order-create] received id=${order.id} order=${order.creditOrderNumber || order.id}`);
+      });
       logApiOrderStatus("database value before browser save merge", Array.isArray(existingState.orders) ? existingState.orders : []);
       logApiOrderStatus("frontend value received", Array.isArray(incomingState.orders) ? incomingState.orders : []);
       const mergedState = mergeSharedState(existingState, incomingState);
       await writeSharedStateJson(mergedState);
+      incomingOrders.filter((order) => order?.id && !existingIds.has(String(order.id))).forEach((order) => {
+        console.log(`[sales-order-create] created id=${order.id} order=${order.creditOrderNumber || order.id}`);
+      });
+      console.log(`[sales-order-create] total_orders=${Array.isArray(mergedState.orders) ? mergedState.orders.length : 0}`);
       logApiOrderStatus("database value after browser save merge", Array.isArray(mergedState.orders) ? mergedState.orders : []);
       logApiOrderStatus("API response sent to frontend", Array.isArray(mergedState.orders) ? mergedState.orders : []);
       response.writeHead(200, {

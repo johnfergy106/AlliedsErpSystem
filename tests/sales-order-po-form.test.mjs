@@ -104,3 +104,13 @@ test("line item grid keeps unit of measure and price fields from clipping", () =
   assert.match(styleSource, /@media \(max-width: 980px\)[\s\S]*\.line-product-field[\s\S]*grid-column: 1 \/ -1/);
   assert.match(styleSource, /@media \(max-width: 680px\)[\s\S]*\.line-item[\s\S]*grid-template-columns: 1fr/);
 });
+
+test("sales order list paginates the full order collection instead of five records", () => {
+  assert.match(appSource, /let orderPage = 1/);
+  assert.match(appSource, /let orderPageSize = 25/);
+  assert.match(appSource, /const recent = newestOrdersFirst\(orders\)\.slice\(0, 5\)/);
+  assert.match(appSource, /const pageRows = rows\.slice\(start, start \+ orderPageSize\)/);
+  assert.match(appSource, /Showing \$\{showingStart\}-\$\{showingEnd\} of \$\{total\} orders/);
+  assert.match(appSource, /Page \$\{orderPage\} of \$\{totalPages\}/);
+  assert.match(appSource, /orderPageSize=Number\(this\.value\);orderPage=1;render\(\)/);
+});
