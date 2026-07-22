@@ -116,16 +116,23 @@ test("sales order list paginates the full order collection instead of five recor
   assert.match(appSource, /orderPageSize=Number\(this\.value\);orderPage=1;render\(\)/);
 });
 
-test("login credentials are preserved while typing and remembered after login", () => {
+test("login fields can be cleared and passwords are not persisted", () => {
   assert.match(appSource, /const rememberedLoginKey = "alliedErpRememberedLogin"/);
-  assert.match(appSource, /const loginDraftKey = "alliedErpLoginDraft"/);
+  assert.doesNotMatch(appSource, /const loginDraftKey = "alliedErpLoginDraft"/);
+  assert.match(appSource, /let loginDraft = \{ username: "", password: "" \}/);
+  assert.match(appSource, /if \(loginDraftInitialized\) return loginDraft/);
   assert.match(appSource, /function loadSavedLoginCredentials\(\)/);
   assert.match(appSource, /function saveLoginDraftFromInputs\(\)/);
-  assert.match(appSource, /function rememberLoginCredentials\(username, password\)/);
+  assert.match(appSource, /function rememberLoginCredentials\(username\)/);
   assert.match(appSource, /id="loginUsername"[\s\S]*value="\$\{html\(savedLogin\.username\)\}"[\s\S]*oninput="saveLoginDraftFromInputs\(\)"/);
   assert.match(appSource, /id="loginPassword"[\s\S]*value="\$\{html\(savedLogin\.password\)\}"[\s\S]*oninput="saveLoginDraftFromInputs\(\)"/);
+  assert.doesNotMatch(appSource, /draft\.username \|\| remembered\.username/);
+  assert.doesNotMatch(appSource, /draft\.password \|\| remembered\.password/);
+  assert.doesNotMatch(appSource, /localStorage\.setItem\(rememberedLoginKey, JSON\.stringify\(\{ username, password \}\)\)/);
+  assert.doesNotMatch(appSource, /localStorage\.setItem\([^)]*password/);
+  assert.match(appSource, /currentSessionPassword = password/);
   assert.match(appSource, /saveLoginDraftFromInputs\(\);\s*const user = state\.users\.find/);
-  assert.match(appSource, /rememberLoginCredentials\(username, password\);\s*saveCurrentUser\(user\)/);
+  assert.match(appSource, /rememberLoginCredentials\(username\);\s*saveCurrentUser\(user\)/);
 });
 
 test("settings is visible to all users while assistant tools remain super-admin only", () => {

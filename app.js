@@ -115,12 +115,15 @@ let returnToOrderAfterCustomerSave = false;
 let stateSaveTimer = null;
 let stateSyncInFlight = false;
 const rememberedLoginKey = "alliedErpRememberedLogin";
-const loginDraftKey = "alliedErpLoginDraft";
 const themePreferenceKey = "allied_erp_theme";
 let backupStatus = null;
 let backupHistory = [];
 let backupLoading = false;
+let loginDraftInitialized = false;
+let loginDraft = { username: "", password: "" };
+let currentSessionPassword = "";
 
+removeLegacySavedPasswords();
 applyThemePreference();
 
 if ("serviceWorker" in navigator) {
@@ -393,19 +396,51 @@ function saveCurrentUser(user) {
 }
 
 function loadSavedLoginCredentials() {
-  const parse = (key) => {
+  if (loginDraftInitialized) return loginDraft;
+  loginDraftInitialized = true;
+  try {
+    const remembered = JSON.parse(localStorage.getItem(rememberedLoginKey) || "{}");
+    loginDraft = { username: String(remembered.username || ""), password: "" };
+  } catch {
+    loginDraft = { username: "", password: "" };
+  }
+  return loginDraft;
+}
+
+function saveLoginDraftFromInputs() {
+  loginDraft = {
+    username: document.querySelector("#loginUsername")?.value ?? "",
+    password: document.querySelector("#loginPassword")?.value ?? "",
+  };
+}
+
+function rememberLoginCredentials(username) {
+  localStorage.setItem(rememberedLoginKey, JSON.stringify({ username }));
+  localStorage.removeItem("alliedErpLoginDraft");
+}
+
+function currentPasswordForProtectedAction() {
+  if (currentSessionPassword) return currentSessionPassword;
+  const value = prompt("Enter your password to continue:");
+  currentSessionPassword = value || "";
+  return currentSessionPassword;
+}
+
+function removeLegacySavedPasswords() {
+  const scrub = (key) => {
     try {
-      return JSON.parse(localStorage.getItem(key) || "{}");
+      const value = JSON.parse(localStorage.getItem(key) || "{}");
+      if (value && Object.prototype.hasOwnProperty.call(value, "password")) {
+        delete value.password;
+        if (key === "alliedErpLoginDraft") localStorage.removeItem(key);
+        else localStorage.setItem(key, JSON.stringify(value));
+      }
     } catch {
-      return {};
+      localStorage.removeItem(key);
     }
   };
-  const remembered = parse(rememberedLoginKey);
-  const draft = parse(loginDraftKey);
-  return {
-    username: String(draft.username || remembered.username || ""),
-    password: String(draft.password || remembered.password || ""),
-  };
+  scrub(rememberedLoginKey);
+  scrub("alliedErpLoginDraft");
 }
 
 function themePreference() {
@@ -432,18 +467,6 @@ function setThemePreference(preference) {
 window.matchMedia?.("(prefers-color-scheme: dark)")?.addEventListener?.("change", () => {
   if (themePreference() === "system") applyThemePreference("system");
 });
-
-function saveLoginDraftFromInputs() {
-  const username = document.querySelector("#loginUsername")?.value || "";
-  const password = document.querySelector("#loginPassword")?.value || "";
-  localStorage.setItem(loginDraftKey, JSON.stringify({ username, password }));
-}
-
-function rememberLoginCredentials(username, password) {
-  const credentials = { username, password };
-  localStorage.setItem(rememberedLoginKey, JSON.stringify(credentials));
-  localStorage.setItem(loginDraftKey, JSON.stringify(credentials));
-}
 
 function isAdmin() {
   return currentUser?.role === "admin" || currentUser?.role === "super_admin";
@@ -789,7 +812,8 @@ function login(event) {
     toast("Login failed. Check the username and password.");
     return;
   }
-  rememberLoginCredentials(username, password);
+  currentSessionPassword = password;
+  rememberLoginCredentials(username);
   saveCurrentUser(user);
   view = "dashboard";
   search = "";
@@ -798,6 +822,7 @@ function login(event) {
 
 function logout() {
   currentUser = null;
+  currentSessionPassword = "";
   localStorage.removeItem("alliedErpUser");
   view = "dashboard";
   render();
@@ -2280,10 +2305,9 @@ function formatClientBytes(bytes = 0) {
 }
 
 function backupAuthHeaders() {
-  const saved = loadSavedLoginCredentials();
   return {
-    "X-Allied-Username": currentUser?.username || saved.username || "",
-    "X-Allied-Password": saved.password || "",
+    "X-Allied-Username": currentUser?.username || "",
+    "X-Allied-Password": currentPasswordForProtectedAction(),
   };
 }
 
