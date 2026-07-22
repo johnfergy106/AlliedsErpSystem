@@ -252,18 +252,22 @@ function markSoftDeletedRecords(records = [], deletedIds = [], recordType = "rec
   });
 }
 
-function mergeByKey(existing = [], incoming = [], key, deleted = []) {
-  const deletedSet = new Set(deleted);
+function mergeByKey(existing = [], incoming = [], key) {
   const records = new Map();
   existing.forEach((item) => {
     const id = item?.[key];
-    if (id && !deletedSet.has(String(id))) records.set(String(id), item);
+    if (id) records.set(String(id), item);
   });
   incoming.forEach((item) => {
     const id = item?.[key];
-    if (id && !deletedSet.has(String(id))) records.set(String(id), item);
+    if (id) records.set(String(id), item);
   });
   return [...records.values()];
+}
+
+function removeDeletedByKey(records = [], key, deleted = []) {
+  const deletedSet = new Set(deleted.map(String));
+  return (Array.isArray(records) ? records : []).filter((item) => item?.[key] && !deletedSet.has(String(item[key])));
 }
 
 const statusRank = {
@@ -444,7 +448,7 @@ function mergeSharedState(existing = {}, incoming = {}) {
   }));
   merged.customers = markSoftDeletedRecords(mergeByKey(existing.customers, incoming.customers, "id"), deletedCustomers, "customer");
   merged.products = markSoftDeletedRecords(mergeByKey(existing.products, incoming.products, "id"), deletedProducts, "product");
-  merged.users = mergeByKey(existing.users, incoming.users, "username", deletedUsers);
+  merged.users = removeDeletedByKey(mergeByKey(existing.users, incoming.users, "username"), "username", deletedUsers);
   return merged;
 }
 

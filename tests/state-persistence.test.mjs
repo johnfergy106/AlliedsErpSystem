@@ -434,6 +434,24 @@ test("deleted product markers become soft deletes when stale data is posted", as
   assert.equal(state.deletedProducts.includes("P-DELETE"), true);
 });
 
+test("delete markers in the same save keep customer and product records restorable", async () => {
+  await postState({
+    customers: [{ id: "C-SAME-SAVE-DELETE", name: "Same Save Deleted Customer" }],
+    products: [{ id: "P-SAME-SAVE-DELETE", name: "Same Save Deleted Product" }],
+    deletedCustomers: ["C-SAME-SAVE-DELETE"],
+    deletedProducts: ["P-SAME-SAVE-DELETE"],
+  });
+  const state = await getState();
+  const customer = state.customers.find((item) => item.id === "C-SAME-SAVE-DELETE");
+  const product = state.products.find((item) => item.id === "P-SAME-SAVE-DELETE");
+  assert.ok(customer);
+  assert.ok(product);
+  assert.ok(customer.deleted_at);
+  assert.ok(product.deleted_at);
+  assert.equal(customer.deleted_by, "Legacy delete marker");
+  assert.equal(product.deleted_by, "Legacy delete marker");
+});
+
 test("sent to shipping status is not overwritten by a stale verified order copy", async () => {
   await postState({
     orders: [{
