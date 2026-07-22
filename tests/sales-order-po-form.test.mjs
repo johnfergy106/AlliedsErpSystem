@@ -126,3 +126,9 @@ test("login credentials are preserved while typing and remembered after login", 
   assert.match(appSource, /saveLoginDraftFromInputs\(\);\s*const user = state\.users\.find/);
   assert.match(appSource, /rememberLoginCredentials\(username, password\);\s*saveCurrentUser\(user\)/);
 });
+
+test("assistant tab is visible only to super admin users", () => {
+  assert.match(appSource, /if \(view === "settings" && !isSuperAdmin\(\)\) view = "dashboard"/);
+  assert.match(appSource, /\$\{isSuperAdmin\(\) \? navButton\("settings", "⚙", "Vapi"\) : ""\}/);
+  assert.match(appSource, /if \(view === "settings" && isSuperAdmin\(\)\) return settingsView\(\)/);
+});

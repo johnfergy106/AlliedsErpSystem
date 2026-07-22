@@ -746,6 +746,7 @@ function render() {
     settings: ["Assistant Verification", "Connect the ERP order workflow to an assistant."],
   };
   if (view === "users" && !isAdmin()) view = "dashboard";
+  if (view === "settings" && !isSuperAdmin()) view = "dashboard";
 
   document.querySelector("#app").innerHTML = `
     <div class="shell">
@@ -763,7 +764,7 @@ function render() {
           ${navButton("products", "◇", "Products")}
           ${navButton("customers", "◉", "Customers")}
           ${isAdmin() ? navButton("users", "♙", "Users") : ""}
-          ${navButton("settings", "⚙", "Vapi")}
+          ${isSuperAdmin() ? navButton("settings", "⚙", "Vapi") : ""}
         </nav>
         <div class="sidebar-foot">Signed in as ${html(currentUser.name)}. ${html(roleLabel())} view is filtered to your workflow.</div>
       </aside>
@@ -878,7 +879,7 @@ function renderView() {
   if (view === "products") return productsView();
   if (view === "customers") return customersView();
   if (view === "users" && isAdmin()) return usersView();
-  if (view === "settings") return settingsView();
+  if (view === "settings" && isSuperAdmin()) return settingsView();
   return dashboardView();
 }
 
