@@ -286,7 +286,7 @@ test("server state saves merge records instead of replacing other users' work", 
   assert.deepEqual(state.users.map((user) => user.username).sort(), ["avery", "jordan"]);
 });
 
-test("deleted customers stay deleted when an older browser posts stale data", async () => {
+test("deleted customer markers become soft deletes when an older browser posts stale data", async () => {
   await postState({
     customers: [{ id: "C-1", name: "Customer One" }],
     deletedCustomers: ["C-1"],
@@ -295,11 +295,13 @@ test("deleted customers stay deleted when an older browser posts stale data", as
     customers: [{ id: "C-1", name: "Customer One Stale Copy" }],
   });
   const state = await getState();
-  assert.equal(state.customers.some((customer) => customer.id === "C-1"), false);
+  const customer = state.customers.find((item) => item.id === "C-1");
+  assert.ok(customer);
+  assert.ok(customer.deleted_at);
   assert.deepEqual(state.deletedCustomers, ["C-1"]);
 });
 
-test("new customers remain saved while old deleted customer ids stay blocked", async () => {
+test("new customers remain saved while old deleted customer ids stay soft deleted", async () => {
   await postState({
     customers: [{ id: "C-1001", name: "Deleted Customer" }],
     deletedCustomers: ["C-1001"],
@@ -311,7 +313,9 @@ test("new customers remain saved while old deleted customer ids stay blocked", a
     ],
   });
   const state = await getState();
-  assert.equal(state.customers.some((customer) => customer.id === "C-1001"), false);
+  const deletedCustomer = state.customers.find((customer) => customer.id === "C-1001");
+  assert.ok(deletedCustomer);
+  assert.ok(deletedCustomer.deleted_at);
   assert.equal(state.customers.some((customer) => customer.id === "C-1002" && customer.name === "New Customer"), true);
 });
 
@@ -372,6 +376,34 @@ test("ten and fifty sales orders remain available with pagination and search", a
   assert.equal(searchResult.items[0].id, "SO-BULK-043");
 });
 
+test("production-style saves preserve 100 customers and 100 sales orders", async () => {
+  const customers = Array.from({ length: 100 }, (_, index) => ({
+    id: `C-PERSIST-${String(index + 1).padStart(3, "0")}`,
+    name: `Persistent Customer ${index + 1}`,
+    account_number: `ACCT-${String(index + 1).padStart(4, "0")}`,
+  }));
+  const orders = Array.from({ length: 100 }, (_, index) => ({
+    id: `SO-PERSIST-${String(index + 1).padStart(3, "0")}`,
+    customerId: customers[index].id,
+    rep: "Jordan Lee",
+    status: index % 2 ? "completed" : "pending",
+    purchase_order_number: `PO-${String(index + 1).padStart(5, "0")}`,
+    verificationHistory: [{ outcome: "Seeded", callId: `call-${index + 1}` }],
+    vapiNotes: [{ id: `note-${index + 1}`, vapi_call_id: `call-${index + 1}`, summary: "Persistent note" }],
+  }));
+  await postState({ customers, orders });
+  await postState({ settings: { release: "production-safe-update" } });
+  const state = await getState();
+  const persistedCustomers = state.customers.filter((customer) => customer.id.startsWith("C-PERSIST-"));
+  const persistedOrders = state.orders.filter((order) => order.id.startsWith("SO-PERSIST-"));
+  assert.equal(persistedCustomers.length, 100);
+  assert.equal(persistedOrders.length, 100);
+  assert.equal(persistedCustomers.every((customer) => customer.account_number), true);
+  assert.equal(persistedOrders.every((order) => order.purchase_order_number), true);
+  assert.equal(persistedOrders.every((order) => order.verificationHistory?.length === 1), true);
+  assert.equal(persistedOrders.every((order) => order.vapiNotes?.length === 1), true);
+});
+
 test("deleted sales orders are hidden for one user instead of removed globally", async () => {
   await postState({
     orders: [{ id: "SO-HIDDEN", customerId: "C-9", rep: "Jordan Lee" }],
@@ -387,7 +419,7 @@ test("deleted sales orders are hidden for one user instead of removed globally",
   assert.equal(state.deletedOrders.includes("SO-HIDDEN"), false);
 });
 
-test("deleted products stay permanently deleted when stale data is posted", async () => {
+test("deleted product markers become soft deletes when stale data is posted", async () => {
   await postState({
     products: [{ id: "P-DELETE", name: "Deleted Product" }],
     deletedProducts: ["P-DELETE"],
@@ -396,7 +428,9 @@ test("deleted products stay permanently deleted when stale data is posted", asyn
     products: [{ id: "P-DELETE", name: "Deleted Product Stale Copy" }],
   });
   const state = await getState();
-  assert.equal(state.products.some((product) => product.id === "P-DELETE"), false);
+  const product = state.products.find((item) => item.id === "P-DELETE");
+  assert.ok(product);
+  assert.ok(product.deleted_at);
   assert.equal(state.deletedProducts.includes("P-DELETE"), true);
 });
 

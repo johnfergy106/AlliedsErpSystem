@@ -177,12 +177,17 @@ function normalizeState(data) {
   data.users = (data.users || []).map((user) => (user.username === "admin" ? { ...user, role: "super_admin" } : user));
   data.users = data.users.filter((user) => !data.deletedUsers.includes(user.username) || user.role === "super_admin");
   data.customers = (data.customers || [])
-    .filter((customer) => !data.deletedCustomers.includes(customer.id))
     .map((customer) => ({
       ...customer,
       account_number: String(customer.account_number || customer.accountNumber || "").trim(),
+      deleted_at: customer.deleted_at || (data.deletedCustomers.includes(customer.id) ? new Date().toISOString() : ""),
+      deleted_by: customer.deleted_by || (data.deletedCustomers.includes(customer.id) ? "Legacy delete marker" : ""),
     }));
-  data.products = (data.products || []).filter((product) => !data.deletedProducts.includes(product.id));
+  data.products = (data.products || []).map((product) => ({
+    ...product,
+    deleted_at: product.deleted_at || (data.deletedProducts.includes(product.id) ? new Date().toISOString() : ""),
+    deleted_by: product.deleted_by || (data.deletedProducts.includes(product.id) ? "Legacy delete marker" : ""),
+  }));
   data.orders = (data.orders || []).map((order) => {
     const status = order.status || "pending";
     const at = order.statusChangedAt || order.verification?.at || order.date || "";
@@ -430,6 +435,10 @@ function roleLabel(role = currentUser?.role) {
   return labels[role] || role || "";
 }
 
+function isProductionApp() {
+  return String(appConfig.environmentName || "").toLowerCase() === "production";
+}
+
 function statusLabels() {
   return {
     pending: "Pending",
@@ -444,6 +453,7 @@ function statusLabels() {
     order_shipped: "Order Shipped",
     completed: "Completed",
     cancelled: "Cancelled",
+    archived: "Archived",
   };
 }
 
@@ -452,7 +462,7 @@ function statusLabel(status) {
 }
 
 function visibleOrders() {
-  const notHidden = (order) => !(order.hiddenFor || []).includes(currentUser?.username);
+  const notHidden = (order) => !isSoftDeleted(order) && !(order.hiddenFor || []).includes(currentUser?.username);
   if (isAdmin()) return state.orders.filter(notHidden);
   if (isCredit()) return state.orders.filter((order) => notHidden(order) && (["verified", "pending_ap", "credit_hold", "kickback_pending", "sent_to_shipping", "order_shipped", "completed"].includes(order.status) || (order.status === "cancelled" && orderHadAnyStatus(order, ["verified", "pending_ap", "credit_hold", "kickback_pending", "sent_to_shipping"]))));
   if (isShipping()) return state.orders.filter((order) => notHidden(order) && order.status === "sent_to_shipping");
@@ -460,9 +470,10 @@ function visibleOrders() {
 }
 
 function visibleCustomers() {
-  if (isAdmin() || isCredit() || isShipping()) return state.customers;
+  const customers = state.customers.filter((customer) => !isSoftDeleted(customer));
+  if (isAdmin() || isCredit() || isShipping()) return customers;
   const allowedIds = new Set(visibleOrders().map((order) => order.customerId));
-  return state.customers.filter((customer) => allowedIds.has(customer.id) || customer.owner === currentUser?.name);
+  return customers.filter((customer) => allowedIds.has(customer.id) || customer.owner === currentUser?.name);
 }
 
 function canAccessCustomer(customerId) {
@@ -476,6 +487,24 @@ function orderHadAnyStatus(order, statuses) {
 function filteredOrders(orders) {
   if (statusFilter === "all") return orders;
   return orders.filter((order) => order.status === statusFilter);
+}
+
+function isSoftDeleted(record = {}) {
+  return Boolean(record.deleted_at || record.archived_at);
+}
+
+function auditAction(action, recordType, recordId, reason = "") {
+  if (!Array.isArray(state.auditLog)) state.auditLog = [];
+  state.auditLog.push({
+    id: uid("AUDIT", state.auditLog),
+    action,
+    record_type: recordType,
+    record_id: recordId,
+    reason,
+    employee: currentUser?.name || "",
+    user: currentUser?.username || "",
+    at: new Date().toISOString(),
+  });
 }
 
 function orderSortValue(order = {}) {
@@ -518,7 +547,7 @@ function canAccessProduct(product) {
 }
 
 function visibleProducts() {
-  return state.products.filter((product) => canAccessProduct(product));
+  return state.products.filter((product) => !isSoftDeleted(product) && canAccessProduct(product));
 }
 
 function selectableProducts(selectedProductId = "") {
@@ -797,7 +826,7 @@ function topActions() {
   if (view === "customers") return `<button class="btn primary" onclick="openCustomerForm()">＋ New Customer</button>${account}`;
   if (view === "users" && isAdmin()) return `<button class="btn primary" onclick="openUserForm()">＋ New User</button>${account}`;
   if (view === "dashboard") return `<button class="btn primary" onclick="setView('orders')">＋ Enter Order</button>${account}`;
-  return `<button class="btn" onclick="resetDemoData()">↻ Reset Demo Data</button>${account}`;
+  return isProductionApp() ? account : `<button class="btn" onclick="resetDemoData()">↻ Reset Demo Data</button>${account}`;
 }
 
 function notificationItems() {
@@ -2081,6 +2110,8 @@ function usersView() {
 }
 
 function settingsView() {
+  const deletedCustomers = state.customers.filter((customer) => isSoftDeleted(customer));
+  const deletedProducts = state.products.filter((product) => isSoftDeleted(product));
   return `
     <div class="split">
       <div class="panel">
@@ -2120,8 +2151,42 @@ function settingsView() {
           </table>
         </div>
       </div>
+      <div class="panel">
+        <div class="panel-head"><h2 class="panel-title">Deleted Records</h2></div>
+        <div class="panel-body">
+          <div class="callout">Deleted production records are hidden from normal lists but retained here for recovery.</div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Type</th><th>Name</th><th>Deleted At</th><th>Deleted By</th><th>Actions</th></tr></thead>
+            <tbody>${[...deletedCustomers.map((customer) => ({ type: "Customer", id: customer.id, name: customer.name, at: customer.deleted_at, by: customer.deleted_by })), ...deletedProducts.map((product) => ({ type: "Product", id: product.id, name: product.name || product.sku, at: product.deleted_at, by: product.deleted_by }))].map((record) => `<tr>
+              <td>${html(record.type)}</td>
+              <td><strong>${html(record.name || record.id)}</strong></td>
+              <td>${html(record.at || "")}</td>
+              <td>${html(record.by || "")}</td>
+              <td><button class="btn mini-btn" onclick="restoreDeletedRecord('${record.type.toLowerCase()}', '${html(record.id)}')">Restore</button></td>
+            </tr>`).join("") || `<tr><td colspan="5"><div class="empty">No deleted customer or product records.</div></td></tr>`}</tbody>
+          </table>
+        </div>
+      </div>
     </div>
   `;
+}
+
+function restoreDeletedRecord(type, id) {
+  if (!isSuperAdmin()) return toast("Only Super Admin can restore deleted records.");
+  const collection = type === "customer" ? state.customers : type === "product" ? state.products : [];
+  const record = collection.find((item) => item.id === id);
+  if (!record) return toast("Record was not found.");
+  delete record.deleted_at;
+  delete record.deleted_by;
+  delete record.deletion_reason;
+  if (type === "customer") state.deletedCustomers = (state.deletedCustomers || []).filter((deletedId) => deletedId !== id);
+  if (type === "product") state.deletedProducts = (state.deletedProducts || []).filter((deletedId) => deletedId !== id);
+  auditAction(`Restore ${type}`, type, id, "Super Admin restored deleted record");
+  saveState();
+  render();
+  toast(`${type === "customer" ? "Customer" : "Product"} restored.`);
 }
 
 function addUnitOfMeasure() {
@@ -2659,6 +2724,7 @@ function deleteOrder(orderId) {
   }
   if (!Array.isArray(order.hiddenFor)) order.hiddenFor = [];
   if (!order.hiddenFor.includes(currentUser.username)) order.hiddenFor.push(currentUser.username);
+  auditAction("Hide sales order", "sales_order", orderId, "User removed order from their dashboard");
   saveState();
   render();
   toast(`${order.id} removed from your list.`);
@@ -2685,6 +2751,7 @@ function deleteSelectedOrders() {
     if (order) {
       if (!Array.isArray(order.hiddenFor)) order.hiddenFor = [];
       if (!order.hiddenFor.includes(currentUser.username)) order.hiddenFor.push(currentUser.username);
+      auditAction("Hide sales order", "sales_order", id, "Bulk order removal from dashboard");
     }
   });
   saveState();
@@ -2740,13 +2807,15 @@ function deleteProduct(productId) {
   if (!canAccessProduct(product)) return toast("You can only delete products in your own catalog.");
   const orderCount = state.orders.filter((order) => (order.items || []).some((item) => item.productId === productId)).length;
   const message = orderCount
-    ? `${product.sku} is used on ${orderCount} order${orderCount === 1 ? "" : "s"}. Delete it from the product catalog anyway? Existing orders will keep the line but show a missing product name.`
-    : `Delete product ${product.sku}? This cannot be undone.`;
+    ? `${product.sku} is used on ${orderCount} order${orderCount === 1 ? "" : "s"}. Remove it from active product lists? Existing orders will keep the product record.`
+    : `Remove product ${product.sku} from active product lists?`;
   if (!confirm(message)) return;
-  state.products = state.products.filter((item) => item.id !== productId);
+  product.deleted_at = new Date().toISOString();
+  product.deleted_by = currentUser?.name || "";
+  auditAction("Soft delete product", "product", productId, orderCount ? "Product referenced by orders" : "User requested product removal");
   saveState();
   render();
-  toast("Product deleted.");
+  toast("Product removed from active lists.");
 }
 
 function openCustomerForm(id = null) {
@@ -2851,12 +2920,14 @@ function deleteCustomer(customerId) {
   if (!customer) return toast("Customer was not found.");
   if (!canAccessCustomer(customerId)) return toast("You can only delete customers assigned to your sales account.");
   const orderCount = state.orders.filter((order) => order.customerId === customerId).length;
-  if (orderCount && !confirm(`${customer.name} is linked to ${orderCount} sales order${orderCount === 1 ? "" : "s"}. Delete the customer anyway? Existing orders will show Unknown customer.`)) return;
-  if (!orderCount && !confirm(`Delete customer ${customer.name}? This cannot be undone.`)) return;
-  state.customers = state.customers.filter((item) => item.id !== customerId);
+  if (orderCount && !confirm(`${customer.name} is linked to ${orderCount} sales order${orderCount === 1 ? "" : "s"}. Remove the customer from active lists? Existing orders will keep the customer record.`)) return;
+  if (!orderCount && !confirm(`Remove customer ${customer.name} from active lists?`)) return;
+  customer.deleted_at = new Date().toISOString();
+  customer.deleted_by = currentUser?.name || "";
+  auditAction("Soft delete customer", "customer", customerId, orderCount ? "Customer linked to orders" : "User requested customer removal");
   saveState();
   render();
-  toast("Customer deleted.");
+  toast("Customer removed from active lists.");
 }
 
 function deleteSelectedCustomers() {
@@ -2864,11 +2935,18 @@ function deleteSelectedCustomers() {
   if (!ids.length) return toast("Select at least one customer.");
   const allowed = ids.filter((id) => canAccessCustomer(id));
   if (!allowed.length) return toast("No selected customers can be deleted.");
-  if (!confirm(`Delete ${allowed.length} selected customer${allowed.length === 1 ? "" : "s"}? This cannot be undone.`)) return;
-  state.customers = state.customers.filter((customer) => !allowed.includes(customer.id));
+  if (!confirm(`Remove ${allowed.length} selected customer${allowed.length === 1 ? "" : "s"} from active lists?`)) return;
+  allowed.forEach((id) => {
+    const customer = customerById(id);
+    if (customer) {
+      customer.deleted_at = new Date().toISOString();
+      customer.deleted_by = currentUser?.name || "";
+      auditAction("Soft delete customer", "customer", id, "Bulk customer removal");
+    }
+  });
   saveState();
   render();
-  toast("Selected customers deleted.");
+  toast("Selected customers removed from active lists.");
 }
 
 function saveSettings(event) {
@@ -3036,6 +3114,10 @@ function timestamp() {
 }
 
 function resetDemoData() {
+  if (isProductionApp()) {
+    toast("Production data reset is disabled.");
+    return;
+  }
   state = structuredClone(seedData);
   saveState();
   render();

@@ -4,6 +4,7 @@ import test from "node:test";
 
 const appSource = await readFile("app.js", "utf8");
 const styleSource = await readFile("styles.css", "utf8");
+const serverSource = await readFile("server.js", "utf8");
 
 test("new and edit sales order forms render the Purchase Order Number input", () => {
   assert.match(appSource, /function openOrderForm\(id = null\)/);
@@ -131,4 +132,23 @@ test("assistant tab is visible only to super admin users", () => {
   assert.match(appSource, /if \(view === "settings" && !isSuperAdmin\(\)\) view = "dashboard"/);
   assert.match(appSource, /\$\{isSuperAdmin\(\) \? navButton\("settings", "⚙", "Vapi"\) : ""\}/);
   assert.match(appSource, /if \(view === "settings" && isSuperAdmin\(\)\) return settingsView\(\)/);
+});
+
+test("production reset is disabled and deleted records can be restored", () => {
+  assert.match(appSource, /function isProductionApp\(\)/);
+  assert.match(appSource, /Production data reset is disabled/);
+  assert.match(appSource, /function restoreDeletedRecord\(type, id\)/);
+  assert.match(appSource, /Only Super Admin can restore deleted records/);
+  assert.match(appSource, /state\.deletedCustomers = \(state\.deletedCustomers \|\| \[\]\)\.filter/);
+  assert.match(appSource, /state\.deletedProducts = \(state\.deletedProducts \|\| \[\]\)\.filter/);
+  assert.match(appSource, /Deleted Records/);
+  assert.match(appSource, /deleted_at/);
+  assert.match(appSource, /deleted_by/);
+});
+
+test("server refuses production startup without persistent data storage", () => {
+  assert.match(serverSource, /NODE_ENV === "production" && !process\.env\.ALLIED_ERP_DATA_DIR/);
+  assert.match(serverSource, /Refusing to start with ephemeral local storage/);
+  assert.match(serverSource, /shared-state-latest\.json/);
+  assert.match(serverSource, /Production data protection: shared-state\.json could not be read/);
 });

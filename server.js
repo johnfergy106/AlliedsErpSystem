@@ -66,6 +66,10 @@ const retryWorkerIntervalMs = Number(process.env.VAPI_RETRY_WORKER_INTERVAL_MS |
 let retryWorkerRunning = false;
 let sharedStateWriteQueue = Promise.resolve();
 
+if (process.env.NODE_ENV === "production" && !process.env.ALLIED_ERP_DATA_DIR) {
+  throw new Error("Production data protection: ALLIED_ERP_DATA_DIR must point to a persistent disk. Refusing to start with ephemeral local storage.");
+}
+
 const contentTypes = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -91,7 +95,16 @@ async function readSharedStateJson() {
   if (!existsSync(sharedStatePath)) return {};
   try {
     return migrateSharedState(JSON.parse(await readFile(sharedStatePath, "utf8")));
-  } catch {
+  } catch (error) {
+    console.error(`[data-protection] Failed to read shared state: ${error.message}`);
+    const latestBackup = path.join(backupRoot, "shared-state-latest.json");
+    if (existsSync(latestBackup)) {
+      console.warn("[data-protection] Loading latest backup shared-state-latest.json.");
+      return migrateSharedState(JSON.parse(await readFile(latestBackup, "utf8")));
+    }
+    if (process.env.NODE_ENV === "production") {
+      throw new Error("Production data protection: shared-state.json could not be read and no backup was available.");
+    }
     return {};
   }
 }
@@ -113,7 +126,14 @@ function migrateSharedState(state = {}) {
     customers: Array.isArray(state.customers) ? state.customers.map((customer) => ({
       ...customer,
       account_number: String(customer.account_number || customer.accountNumber || "").trim(),
+      deleted_at: customer.deleted_at || (Array.isArray(state.deletedCustomers) && state.deletedCustomers.includes(customer.id) ? new Date().toISOString() : ""),
+      deleted_by: customer.deleted_by || (Array.isArray(state.deletedCustomers) && state.deletedCustomers.includes(customer.id) ? "Legacy delete marker" : ""),
     })) : state.customers,
+    products: Array.isArray(state.products) ? state.products.map((product) => ({
+      ...product,
+      deleted_at: product.deleted_at || (Array.isArray(state.deletedProducts) && state.deletedProducts.includes(product.id) ? new Date().toISOString() : ""),
+      deleted_by: product.deleted_by || (Array.isArray(state.deletedProducts) && state.deletedProducts.includes(product.id) ? "Legacy delete marker" : ""),
+    })) : state.products,
     orders: Array.isArray(state.orders) ? state.orders.map((order) => ({
       ...order,
       purchase_order_number: purchaseOrderNumber(order) || "",
@@ -219,6 +239,19 @@ function uniqueList(...lists) {
   return [...new Set(lists.flat().filter(Boolean).map(String))];
 }
 
+function markSoftDeletedRecords(records = [], deletedIds = [], recordType = "record") {
+  const deletedSet = new Set(deletedIds.map(String));
+  return (Array.isArray(records) ? records : []).map((record) => {
+    if (!record?.id || !deletedSet.has(String(record.id)) || record.deleted_at) return record;
+    return {
+      ...record,
+      deleted_at: new Date().toISOString(),
+      deleted_by: record.deleted_by || "Legacy delete marker",
+      deletion_reason: record.deletion_reason || `${recordType} marked deleted by older client`,
+    };
+  });
+}
+
 function mergeByKey(existing = [], incoming = [], key, deleted = []) {
   const deletedSet = new Set(deleted);
   const records = new Map();
@@ -246,6 +279,7 @@ const statusRank = {
   order_shipped: 100,
   completed: 110,
   cancelled: 120,
+  archived: 130,
 };
 
 function statusTime(order = {}) {
@@ -271,6 +305,7 @@ function paginateOrders(orders = [], { page = 1, pageSize = 25, search = "", sta
   const safePageSize = [25, 50, 100].includes(Number(pageSize)) ? Number(pageSize) : 25;
   const query = String(search || "").trim().toLowerCase();
   const filtered = newestOrdersFirst(orders).filter((order) => {
+    if (order.deleted_at) return false;
     const matchesStatus = !status || status === "all" || order.status === status;
     const haystack = `${order.id || ""} ${order.creditOrderNumber || ""} ${order.customerId || ""} ${order.rep || ""} ${order.status || ""} ${order.notes || ""}`.toLowerCase();
     return matchesStatus && (!query || haystack.includes(query));
@@ -403,12 +438,12 @@ function mergeSharedState(existing = {}, incoming = {}) {
     auditLog,
     unitOfMeasures,
   };
-  merged.orders = mergeOrders(existing.orders, incoming.orders).map((order) => ({
+  merged.orders = markSoftDeletedRecords(mergeOrders(existing.orders, incoming.orders), deletedOrders, "sales order").map((order) => ({
     ...order,
     items: Array.isArray(order.items) ? order.items.map((item) => migrateLineItem(item, unitOfMeasures)) : order.items,
   }));
-  merged.customers = mergeByKey(existing.customers, incoming.customers, "id", deletedCustomers);
-  merged.products = mergeByKey(existing.products, incoming.products, "id", deletedProducts);
+  merged.customers = markSoftDeletedRecords(mergeByKey(existing.customers, incoming.customers, "id"), deletedCustomers, "customer");
+  merged.products = markSoftDeletedRecords(mergeByKey(existing.products, incoming.products, "id"), deletedProducts, "product");
   merged.users = mergeByKey(existing.users, incoming.users, "username", deletedUsers);
   return merged;
 }
