@@ -123,16 +123,27 @@ test("login fields can be cleared and passwords are not persisted", () => {
   assert.match(appSource, /if \(loginDraftInitialized\) return loginDraft/);
   assert.match(appSource, /function loadSavedLoginCredentials\(\)/);
   assert.match(appSource, /function saveLoginDraftFromInputs\(\)/);
+  assert.match(appSource, /function syncCredentialFields\(\)/);
+  assert.match(appSource, /function clearLoginFields\(\)/);
   assert.match(appSource, /function rememberLoginCredentials\(username\)/);
-  assert.match(appSource, /id="loginUsername"[\s\S]*value="\$\{html\(savedLogin\.username\)\}"[\s\S]*oninput="saveLoginDraftFromInputs\(\)"/);
-  assert.match(appSource, /id="loginPassword"[\s\S]*value="\$\{html\(savedLogin\.password\)\}"[\s\S]*oninput="saveLoginDraftFromInputs\(\)"/);
+  assert.match(appSource, /<form class="login-form" autocomplete="on"[\s\S]*onsubmit="login\(event\)"[\s\S]*onanimationstart="syncCredentialFields\(\)"/);
+  assert.match(appSource, /id="loginUsername" name="username" autocomplete="username"[\s\S]*value="\$\{html\(savedLogin\.username\)\}"[\s\S]*onfocus="syncCredentialFields\(\)"[\s\S]*oninput="syncCredentialFields\(\)"[\s\S]*onchange="syncCredentialFields\(\)"[\s\S]*onanimationstart="syncCredentialFields\(\)"/);
+  assert.match(appSource, /id="loginPassword" name="password" type="password" autocomplete="current-password"[\s\S]*value="\$\{html\(savedLogin\.password\)\}"[\s\S]*onfocus="syncCredentialFields\(\)"[\s\S]*oninput="syncCredentialFields\(\)"[\s\S]*onchange="syncCredentialFields\(\)"[\s\S]*onanimationstart="syncCredentialFields\(\)"/);
+  assert.match(appSource, /Use another account/);
+  assert.match(appSource, /usernameInput\.value = ""/);
+  assert.match(appSource, /passwordInput\.value = ""/);
   assert.doesNotMatch(appSource, /draft\.username \|\| remembered\.username/);
   assert.doesNotMatch(appSource, /draft\.password \|\| remembered\.password/);
   assert.doesNotMatch(appSource, /localStorage\.setItem\(rememberedLoginKey, JSON\.stringify\(\{ username, password \}\)\)/);
   assert.doesNotMatch(appSource, /localStorage\.setItem\([^)]*password/);
+  assert.match(appSource, /localStorage\.removeItem\("alliedErpLoginDraft"\)/);
   assert.match(appSource, /currentSessionPassword = password/);
-  assert.match(appSource, /saveLoginDraftFromInputs\(\);\s*const user = state\.users\.find/);
+  assert.match(appSource, /syncCredentialFields\(\);\s*const username = document\.querySelector\("#loginUsername"\)\.value/);
+  assert.match(appSource, /loginDraft\.password = ""/);
+  assert.match(appSource, /passwordInput\?\.focus\(\)/);
   assert.match(appSource, /rememberLoginCredentials\(username\);\s*saveCurrentUser\(user\)/);
+  assert.match(styleSource, /input:-webkit-autofill/);
+  assert.match(styleSource, /-webkit-text-fill-color: var\(--ink\)/);
 });
 
 test("settings is visible to all users while assistant tools remain super-admin only", () => {

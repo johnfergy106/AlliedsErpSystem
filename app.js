@@ -414,6 +414,19 @@ function saveLoginDraftFromInputs() {
   };
 }
 
+function syncCredentialFields() {
+  saveLoginDraftFromInputs();
+}
+
+function clearLoginFields() {
+  loginDraft = { username: "", password: "" };
+  const usernameInput = document.querySelector("#loginUsername");
+  const passwordInput = document.querySelector("#loginPassword");
+  if (usernameInput) usernameInput.value = "";
+  if (passwordInput) passwordInput.value = "";
+  usernameInput?.focus();
+}
+
 function rememberLoginCredentials(username) {
   localStorage.setItem(rememberedLoginKey, JSON.stringify({ username }));
   localStorage.removeItem("alliedErpLoginDraft");
@@ -783,16 +796,17 @@ function renderLogin() {
             <div class="brand-sub">ERP sign in</div>
           </div>
         </div>
-        <form class="login-form" onsubmit="login(event)">
+        <form class="login-form" autocomplete="on" onsubmit="login(event)" onanimationstart="syncCredentialFields()">
           <div class="field">
             <label for="loginUsername">Username</label>
-            <input id="loginUsername" autocomplete="username" value="${html(savedLogin.username)}" oninput="saveLoginDraftFromInputs()" required />
+            <input id="loginUsername" name="username" autocomplete="username" value="${html(savedLogin.username)}" onfocus="syncCredentialFields()" oninput="syncCredentialFields()" onchange="syncCredentialFields()" onanimationstart="syncCredentialFields()" required />
           </div>
           <div class="field">
             <label for="loginPassword">Password</label>
-            <input id="loginPassword" type="password" autocomplete="current-password" value="${html(savedLogin.password)}" oninput="saveLoginDraftFromInputs()" required />
+            <input id="loginPassword" name="password" type="password" autocomplete="current-password" value="${html(savedLogin.password)}" onfocus="syncCredentialFields()" oninput="syncCredentialFields()" onchange="syncCredentialFields()" onanimationstart="syncCredentialFields()" required />
           </div>
           <button class="btn primary" type="submit">→ Log In</button>
+          <button class="btn" type="button" onclick="clearLoginFields()">Use another account</button>
         </form>
         <div class="login-help">
           <span>Ask admin for forgot password</span>
@@ -804,11 +818,15 @@ function renderLogin() {
 
 function login(event) {
   event.preventDefault();
+  syncCredentialFields();
   const username = document.querySelector("#loginUsername").value.trim().toLowerCase();
   const password = document.querySelector("#loginPassword").value;
-  saveLoginDraftFromInputs();
   const user = state.users.find((item) => item.username === username && item.password === password);
   if (!user) {
+    loginDraft.password = "";
+    const passwordInput = document.querySelector("#loginPassword");
+    if (passwordInput) passwordInput.value = "";
+    passwordInput?.focus();
     toast("Login failed. Check the username and password.");
     return;
   }
@@ -823,6 +841,8 @@ function login(event) {
 function logout() {
   currentUser = null;
   currentSessionPassword = "";
+  loginDraftInitialized = false;
+  loginDraft = { username: "", password: "" };
   localStorage.removeItem("alliedErpUser");
   view = "dashboard";
   render();

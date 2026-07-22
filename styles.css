@@ -830,6 +830,21 @@ button:focus {
   outline-offset: 1px;
 }
 
+@keyframes alliedAutoFillStart {
+  from { opacity: 1; }
+  to { opacity: 1; }
+}
+
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus {
+  animation-name: alliedAutoFillStart;
+  animation-duration: 0.01s;
+  -webkit-text-fill-color: var(--ink);
+  box-shadow: 0 0 0 1000px var(--field) inset;
+  caret-color: var(--ink);
+}
+
 .line-items {
   display: grid;
   gap: 10px;
