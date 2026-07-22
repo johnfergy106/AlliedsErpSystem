@@ -114,3 +114,15 @@ test("sales order list paginates the full order collection instead of five recor
   assert.match(appSource, /Page \$\{orderPage\} of \$\{totalPages\}/);
   assert.match(appSource, /orderPageSize=Number\(this\.value\);orderPage=1;render\(\)/);
 });
+
+test("login credentials are preserved while typing and remembered after login", () => {
+  assert.match(appSource, /const rememberedLoginKey = "alliedErpRememberedLogin"/);
+  assert.match(appSource, /const loginDraftKey = "alliedErpLoginDraft"/);
+  assert.match(appSource, /function loadSavedLoginCredentials\(\)/);
+  assert.match(appSource, /function saveLoginDraftFromInputs\(\)/);
+  assert.match(appSource, /function rememberLoginCredentials\(username, password\)/);
+  assert.match(appSource, /id="loginUsername"[\s\S]*value="\$\{html\(savedLogin\.username\)\}"[\s\S]*oninput="saveLoginDraftFromInputs\(\)"/);
+  assert.match(appSource, /id="loginPassword"[\s\S]*value="\$\{html\(savedLogin\.password\)\}"[\s\S]*oninput="saveLoginDraftFromInputs\(\)"/);
+  assert.match(appSource, /saveLoginDraftFromInputs\(\);\s*const user = state\.users\.find/);
+  assert.match(appSource, /rememberLoginCredentials\(username, password\);\s*saveCurrentUser\(user\)/);
+});

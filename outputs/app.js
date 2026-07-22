@@ -114,6 +114,8 @@ let deferredInstallPrompt = null;
 let returnToOrderAfterCustomerSave = false;
 let stateSaveTimer = null;
 let stateSyncInFlight = false;
+const rememberedLoginKey = "alliedErpRememberedLogin";
+const loginDraftKey = "alliedErpLoginDraft";
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
@@ -377,6 +379,34 @@ function loadCurrentUser() {
 function saveCurrentUser(user) {
   currentUser = user;
   localStorage.setItem("alliedErpUser", JSON.stringify({ username: user.username }));
+}
+
+function loadSavedLoginCredentials() {
+  const parse = (key) => {
+    try {
+      return JSON.parse(localStorage.getItem(key) || "{}");
+    } catch {
+      return {};
+    }
+  };
+  const remembered = parse(rememberedLoginKey);
+  const draft = parse(loginDraftKey);
+  return {
+    username: String(draft.username || remembered.username || ""),
+    password: String(draft.password || remembered.password || ""),
+  };
+}
+
+function saveLoginDraftFromInputs() {
+  const username = document.querySelector("#loginUsername")?.value || "";
+  const password = document.querySelector("#loginPassword")?.value || "";
+  localStorage.setItem(loginDraftKey, JSON.stringify({ username, password }));
+}
+
+function rememberLoginCredentials(username, password) {
+  const credentials = { username, password };
+  localStorage.setItem(rememberedLoginKey, JSON.stringify(credentials));
+  localStorage.setItem(loginDraftKey, JSON.stringify(credentials));
 }
 
 function isAdmin() {
@@ -647,6 +677,7 @@ function toast(message) {
 }
 
 function renderLogin() {
+  const savedLogin = loadSavedLoginCredentials();
   document.querySelector("#app").innerHTML = `
     <main class="login-screen">
       <section class="login-panel">
@@ -660,11 +691,11 @@ function renderLogin() {
         <form class="login-form" onsubmit="login(event)">
           <div class="field">
             <label for="loginUsername">Username</label>
-            <input id="loginUsername" autocomplete="username" required />
+            <input id="loginUsername" autocomplete="username" value="${html(savedLogin.username)}" oninput="saveLoginDraftFromInputs()" required />
           </div>
           <div class="field">
             <label for="loginPassword">Password</label>
-            <input id="loginPassword" type="password" autocomplete="current-password" required />
+            <input id="loginPassword" type="password" autocomplete="current-password" value="${html(savedLogin.password)}" oninput="saveLoginDraftFromInputs()" required />
           </div>
           <button class="btn primary" type="submit">→ Log In</button>
         </form>
@@ -680,11 +711,13 @@ function login(event) {
   event.preventDefault();
   const username = document.querySelector("#loginUsername").value.trim().toLowerCase();
   const password = document.querySelector("#loginPassword").value;
+  saveLoginDraftFromInputs();
   const user = state.users.find((item) => item.username === username && item.password === password);
   if (!user) {
     toast("Login failed. Check the username and password.");
     return;
   }
+  rememberLoginCredentials(username, password);
   saveCurrentUser(user);
   view = "dashboard";
   search = "";
