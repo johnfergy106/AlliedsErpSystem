@@ -448,6 +448,7 @@ function statusLabels() {
     issue: "Issue",
     credit_hold: "Credit Hold",
     kickback_pending: "Kickback Pending",
+    callback_requested: "Callback Requested",
     partial_ship: "Partial Ship",
     sent_to_shipping: "Sent to Shipping",
     order_shipped: "Order Shipped",
@@ -489,6 +490,12 @@ function filteredOrders(orders) {
   return orders.filter((order) => order.status === statusFilter);
 }
 
+function latestCallbackNote(order = {}) {
+  return order.verification?.callbackNotes
+    || vapiNotesForOrder(order).find((note) => note.callback_notes)?.callback_notes
+    || "";
+}
+
 function isSoftDeleted(record = {}) {
   return Boolean(record.deleted_at || record.archived_at);
 }
@@ -520,6 +527,10 @@ function newestOrdersFirst(orders = []) {
 function statusFilterControl() {
   const statuses = [["all", "All Statuses"], ...Object.entries(statusLabels())];
   return `<select class="status-filter" title="Filter by status" onchange="statusFilter=this.value;orderPage=1;render()">${statuses.map(([value, label]) => `<option value="${value}" ${statusFilter === value ? "selected" : ""}>${label}</option>`).join("")}</select>`;
+}
+
+function callbacksFilterButton() {
+  return `<button class="btn ${statusFilter === "callback_requested" ? "warn" : ""}" type="button" onclick="statusFilter='callback_requested';orderPage=1;render()">Callbacks</button>`;
 }
 
 function uid(prefix, existing) {
@@ -926,7 +937,7 @@ function dashboardView() {
     </div>
     <div class="section split">
       <div class="panel">
-        <div class="panel-head"><h2 class="panel-title">Recent Customer Orders</h2><div class="toolbar">${statusFilterControl()}<button class="btn" onclick="setView('orders')">View All</button></div></div>
+        <div class="panel-head"><h2 class="panel-title">Recent Customer Orders</h2><div class="toolbar">${statusFilterControl()}${callbacksFilterButton()}<button class="btn" onclick="setView('orders')">View All</button></div></div>
         <div class="table-wrap">${ordersTable(recent, false, { showVerificationBadge: false })}</div>
       </div>
       ${isCredit() || isShipping() ? "" : `<div class="panel">
@@ -974,7 +985,7 @@ function ordersView() {
     <div class="panel">
       <div class="panel-head">
         <h2 class="panel-title">Customer Order List</h2>
-        <div class="toolbar">${statusFilterControl()}<label class="compact-select">Show <select onchange="orderPageSize=Number(this.value);orderPage=1;render()">${[25, 50, 100].map((size) => `<option value="${size}" ${orderPageSize === size ? "selected" : ""}>${size}</option>`).join("")}</select></label><button class="btn" onclick="toggleAll('.order-select', true)">Select All</button><button class="btn danger" onclick="deleteSelectedOrders()">Delete Selected</button><input class="search" placeholder="Search orders" value="${html(search)}" oninput="search=this.value;orderPage=1;render()" /></div>
+        <div class="toolbar">${statusFilterControl()}${callbacksFilterButton()}<label class="compact-select">Show <select onchange="orderPageSize=Number(this.value);orderPage=1;render()">${[25, 50, 100].map((size) => `<option value="${size}" ${orderPageSize === size ? "selected" : ""}>${size}</option>`).join("")}</select></label><button class="btn" onclick="toggleAll('.order-select', true)">Select All</button><button class="btn danger" onclick="deleteSelectedOrders()">Delete Selected</button><input class="search" placeholder="Search orders" value="${html(search)}" oninput="search=this.value;orderPage=1;render()" /></div>
       </div>
       <div class="pagination-bar">
         <span>Showing ${showingStart}-${showingEnd} of ${total} orders</span>
@@ -1002,10 +1013,11 @@ function ordersTable(orders, actions = false, options = {}) {
           const customerCell = `${html(customer?.name || "Unknown customer")}${vapiChangeBadge(order)}${adminFollowUpNotes}`;
           const vapiNoteCount = vapiNotesForOrder(order).length || Number(order.vapi_notes_count || 0);
           const notesWarn = pendingVapiChange(order) ? " warn" : "";
+          const callbackNote = order.status === "callback_requested" ? latestCallbackNote(order) : "";
           return `<tr>
             ${actions ? `<td><input class="order-select" type="checkbox" value="${html(order.id)}" /></td>` : ""}
             <td><strong>${html(displayOrderNumber(order))}</strong><div class="metric-note">${orderPartLabel(order)}${order.notes ? ` ${html(order.notes)}` : ""}</div></td>
-            <td>${customerCell}<div class="metric-note">${html(statusLabel(order.status))}${order.statusChangedAt ? ` · ${html(order.statusChangedAt)}` : ""}</div></td>
+            <td>${customerCell}<div class="metric-note">${html(statusLabel(order.status))}${order.statusChangedAt ? ` · ${html(order.statusChangedAt)}` : ""}</div>${callbackNote ? `<div class="metric-note warning-note" title="${html(callbackNote)}">Callback: ${html(callbackNote.length > 90 ? `${callbackNote.slice(0, 87)}...` : callbackNote)}</div>` : ""}</td>
             <td>${html(order.rep)}</td>
             <td>${html(order.date)}</td>
             <td>${money.format(orderTotal(order))}</td>
@@ -1174,6 +1186,7 @@ function statusOptionsForOrder(order) {
     ["issue", "Issue"],
     ["credit_hold", "Credit Hold"],
     ["kickback_pending", "Kickback Pending"],
+    ["callback_requested", "Callback Requested"],
     ["sent_to_shipping", "Sent to Shipping"],
     ["order_shipped", "Order Shipped"],
     ["completed", "Completed"],
@@ -1184,6 +1197,7 @@ function statusOptionsForOrder(order) {
     ["pending_ap", "Pending AP"],
     ["credit_hold", "Credit Hold"],
     ["kickback_pending", "Kickback Pending"],
+    ["callback_requested", "Callback Requested"],
     ["sent_to_shipping", "Sent to Shipping"],
     ["completed", "Completed"],
     ["cancelled", "Cancelled"],
@@ -1272,7 +1286,7 @@ function changeOrderStatus(orderId, status) {
   }
   if (["sent_to_shipping", "partial_ship", "order_shipped", "completed"].includes(status)) order.creditHoldNotes = "";
   recordStatusChange(order, status, notes);
-  if (["verified", "pending_ap", "issue", "cancelled", "credit_hold", "kickback_pending", "partial_ship", "sent_to_shipping", "order_shipped", "completed"].includes(status)) {
+  if (["verified", "pending_ap", "issue", "callback_requested", "cancelled", "credit_hold", "kickback_pending", "partial_ship", "sent_to_shipping", "order_shipped", "completed"].includes(status)) {
     order.verification = {
       ...(order.verification || {}),
       state: status,

@@ -932,7 +932,7 @@ test("Vapi cancelled webhook cancels the order", async () => {
   assert.equal(order.vapiNotes[0].cancellation_reason, "Other");
 });
 
-test("Vapi callback-requested webhook stores issue verification and callback notes", async () => {
+test("Vapi callback-requested webhook changes order status and retains callback notes", async () => {
   await postState({
     orders: [{ id: "SO-VAPI-CALLBACK", customerId: "C-VAPI", rep: "Jordan Lee", status: "verification_in_progress" }],
   });
@@ -953,13 +953,28 @@ test("Vapi callback-requested webhook stores issue verification and callback not
 
   const state = await getState();
   const order = state.orders.find((item) => item.id === "SO-VAPI-CALLBACK");
-  assert.equal(order.status, "verification_in_progress");
-  assert.equal(order.verification.state, "issue");
+  assert.equal(order.status, "callback_requested");
+  assert.equal(order.statusHistory.some((entry) => entry.status === "callback_requested" && /Customer requested a callback during Vapi verification/.test(entry.notes)), true);
+  assert.equal(order.verification.state, "callback_requested");
   assert.equal(order.verification.outcome, "callback_requested");
   assert.equal(order.verification.callbackNotes, "Call back next week");
+  assert.equal(order.verification.at, order.statusChangedAt);
   assert.equal(order.verificationHistory.at(-1).summary, "Buyer requested a callback next week.");
   assert.equal(order.vapiNotes.length, 1);
   assert.equal(order.vapiNotes[0].callback_notes, "Call back next week");
+});
+
+test("sales order API filters callback requested orders only", async () => {
+  await postState({
+    orders: [
+      { id: "SO-CALLBACK-FILTER", customerId: "C-VAPI", rep: "Jordan Lee", status: "callback_requested", statusChangedAt: "2026-07-22T12:00:00.000Z" },
+      { id: "SO-VERIFIED-FILTER", customerId: "C-VAPI", rep: "Jordan Lee", status: "verified", statusChangedAt: "2026-07-22T11:00:00.000Z" },
+    ],
+  });
+  const result = await getSalesOrders({ status: "callback_requested" });
+  assert.equal(result.items.some((order) => order.id === "SO-CALLBACK-FILTER"), true);
+  assert.equal(result.items.some((order) => order.id === "SO-VERIFIED-FILTER"), false);
+  assert.equal(result.items.every((order) => order.status === "callback_requested"), true);
 });
 
 test("Vapi voicemail and no-answer webhooks do not change order status", async () => {

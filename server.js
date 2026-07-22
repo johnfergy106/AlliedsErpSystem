@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { copyFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -218,16 +218,23 @@ async function writeSharedStateJsonNow(state) {
   }
   await writeFile(temporaryPath, body, "utf8");
   let lastError;
-  for (let attempt = 0; attempt < 5; attempt += 1) {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
     try {
       await rename(temporaryPath, sharedStatePath);
       return;
     } catch (error) {
       lastError = error;
-      await new Promise((resolve) => setTimeout(resolve, 25 * (attempt + 1)));
+      await new Promise((resolve) => setTimeout(resolve, Math.min(1000, 50 * (attempt + 1))));
     }
   }
-  throw lastError;
+  try {
+    await copyFile(temporaryPath, sharedStatePath);
+    await unlink(temporaryPath).catch(() => {});
+    console.warn(`[data-protection] Atomic rename failed after retries; completed state write with safe copy fallback: ${lastError?.message || "unknown error"}`);
+    return;
+  } catch {
+    throw lastError;
+  }
 }
 
 async function writeSharedStateJson(state) {
@@ -278,6 +285,7 @@ const statusRank = {
   pending_ap: 50,
   credit_hold: 60,
   kickback_pending: 65,
+  callback_requested: 70,
   sent_to_shipping: 80,
   partial_ship: 90,
   order_shipped: 100,
@@ -748,10 +756,19 @@ function isSuccessfulVapiCompletion(message) {
 function statusLabel(status) {
   const labels = {
     pending: "Pending",
+    pending_ap: "Pending AP",
     verification_in_progress: "Verification In Progress",
     verified: "Verified",
     issue: "Issue",
+    credit_hold: "Credit Hold",
+    kickback_pending: "Kickback Pending",
+    callback_requested: "Callback Requested",
+    partial_ship: "Partial Ship",
+    sent_to_shipping: "Sent to Shipping",
+    order_shipped: "Order Shipped",
+    completed: "Completed",
     cancelled: "Cancelled",
+    archived: "Archived",
   };
   return labels[status] || status || "";
 }
@@ -1156,10 +1173,12 @@ function updateOrderFromVapiOutcome(order, outcome, details, sharedState = null)
     order.verificationAttempts = verification.attempts;
   } else if (outcome === "CALLBACK_REQUESTED") {
     const callbackNotes = conciseCallbackNotes(transcript, analysis);
-    verification.state = "issue";
+    const statusAt = recordOrderStatus(order, "callback_requested", "Customer requested a callback during Vapi verification.", "Vapi");
+    verification.state = "callback_requested";
     verification.outcome = "callback_requested";
-    verification.summary = "Customer requested a callback during Assistant Verification. Order status was not changed.";
+    verification.summary = "Customer requested a callback during Assistant Verification.";
     verification.callbackNotes = callbackNotes;
+    verification.at = statusAt;
   } else if (outcome === "FAILED") {
     verification.state = "failed";
     verification.summary = "Assistant Verification failed. Order status was not changed.";

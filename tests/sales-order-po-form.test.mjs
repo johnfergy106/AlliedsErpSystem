@@ -134,6 +134,18 @@ test("assistant tab is visible only to super admin users", () => {
   assert.match(appSource, /if \(view === "settings" && isSuperAdmin\(\)\) return settingsView\(\)/);
 });
 
+test("callback requested is a first-class order status in the frontend", () => {
+  assert.match(appSource, /callback_requested: "Callback Requested"/);
+  assert.match(appSource, /\["callback_requested", "Callback Requested"\]/);
+  assert.match(appSource, /function callbacksFilterButton\(\)/);
+  assert.match(appSource, /statusFilter='callback_requested'/);
+  assert.match(appSource, /function latestCallbackNote\(order = \{\}\)/);
+  assert.match(appSource, /Callback: \$\{html/);
+  assert.match(styleSource, /\.status\.callback_requested/);
+  assert.match(serverSource, /callback_requested: 70/);
+  assert.match(serverSource, /recordOrderStatus\(order, "callback_requested", "Customer requested a callback during Vapi verification\.", "Vapi"\)/);
+});
+
 test("production reset is disabled and deleted records can be restored", () => {
   assert.match(appSource, /function isProductionApp\(\)/);
   assert.match(appSource, /Production data reset is disabled/);

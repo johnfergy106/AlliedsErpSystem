@@ -622,6 +622,11 @@ tr:last-child td {
   color: #5b2c83;
 }
 
+.status.callback_requested {
+  background: #fff0c2;
+  color: #8a4f00;
+}
+
 .status.partial_ship {
   background: #eaf5ff;
   color: #0b5f8f;
