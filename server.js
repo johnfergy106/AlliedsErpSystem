@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { copyFile, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -516,6 +516,175 @@ function sendJson(response, statusCode, body) {
     "Cache-Control": "no-store",
   });
   response.end(JSON.stringify(body));
+}
+
+function utcFileStamp(date = new Date()) {
+  return date.toISOString().replace(/[:.]/g, "-");
+}
+
+function safeBackupFileName(value = "") {
+  const name = path.basename(String(value || ""));
+  return /^shared-state-[A-Za-z0-9_.-]+\.json$/.test(name) ? name : "";
+}
+
+function backupType(filename = "") {
+  if (filename.includes("manual")) return "Manual";
+  if (filename.includes("pre-restore")) return "Pre-restore safety backup";
+  return "Automatic";
+}
+
+function formatBytes(bytes = 0) {
+  const value = Number(bytes) || 0;
+  if (value >= 1024 * 1024 * 1024) return `${(value / 1024 / 1024 / 1024).toFixed(2)} GB`;
+  if (value >= 1024 * 1024) return `${(value / 1024 / 1024).toFixed(2)} MB`;
+  if (value >= 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${value} B`;
+}
+
+function authCredentials(request) {
+  return {
+    username: String(request.headers["x-allied-username"] || "").trim().toLowerCase(),
+    password: String(request.headers["x-allied-password"] || "").trim(),
+  };
+}
+
+async function authenticateRequest(request) {
+  const { username, password } = authCredentials(request);
+  if (!username || !password) return null;
+  const sharedState = await readSharedStateJson();
+  const users = Array.isArray(sharedState.users) ? sharedState.users : [];
+  const savedUser = users.find((user) => String(user.username || "").toLowerCase() === username);
+  const starterUser = starterUsers.find((user) => user.username === username);
+  const user = savedUser || starterUser;
+  const savedPassword = savedUser?.password || "";
+  const envPassword = envPasswordFor(username);
+  const allowed = user && ((savedPassword && savedPassword === password) || (envPassword && envPassword === password));
+  return allowed ? { ...starterUser, ...savedUser, username } : null;
+}
+
+async function requireSuperAdmin(request, response) {
+  const user = await authenticateRequest(request);
+  if (!user) {
+    sendJson(response, 401, { ok: false, error: "Authentication is required." });
+    return null;
+  }
+  if (user.role !== "super_admin") {
+    sendJson(response, 403, { ok: false, error: "Super Admin authorization is required." });
+    return null;
+  }
+  return user;
+}
+
+function assertAlliedStateShape(state) {
+  if (!state || typeof state !== "object" || Array.isArray(state)) return false;
+  const known = ["orders", "customers", "products", "users", "settings", "unitOfMeasures"];
+  if (!known.some((key) => Object.prototype.hasOwnProperty.call(state, key))) return false;
+  return ["orders", "customers", "products", "users"].every((key) => state[key] === undefined || Array.isArray(state[key]));
+}
+
+async function writeJsonFileAtomically(destination, body) {
+  await mkdir(path.dirname(destination), { recursive: true });
+  const temporaryPath = `${destination}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`;
+  await writeFile(temporaryPath, body, "utf8");
+  try {
+    await rename(temporaryPath, destination);
+  } catch (error) {
+    await copyFile(temporaryPath, destination);
+    await unlink(temporaryPath).catch(() => {});
+    console.warn(`[data-protection] Backup file rename fallback used: ${error.message}`);
+  }
+}
+
+async function createNamedBackup(type = "automatic") {
+  await mkdir(backupRoot, { recursive: true });
+  const createdAt = new Date();
+  const safeType = String(type || "automatic").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "automatic";
+  const filename = `shared-state-${safeType}-${utcFileStamp(createdAt)}-${Math.random().toString(16).slice(2, 8)}.json`;
+  const body = existsSync(sharedStatePath) ? await readFile(sharedStatePath, "utf8") : "{}";
+  JSON.parse(body);
+  const destination = path.join(backupRoot, filename);
+  await writeJsonFileAtomically(destination, body);
+  const info = await stat(destination);
+  return {
+    filename,
+    created_at: createdAt.toISOString(),
+    size: info.size,
+    size_label: formatBytes(info.size),
+    type: backupType(filename),
+  };
+}
+
+async function listBackups() {
+  await mkdir(backupRoot, { recursive: true });
+  const entries = await readdir(backupRoot, { withFileTypes: true });
+  const backups = [];
+  for (const entry of entries) {
+    if (!entry.isFile() || !safeBackupFileName(entry.name)) continue;
+    const info = await stat(path.join(backupRoot, entry.name)).catch(() => null);
+    if (!info) continue;
+    backups.push({
+      filename: entry.name,
+      created_at: info.birthtime?.toISOString?.() || info.mtime.toISOString(),
+      modified_at: info.mtime.toISOString(),
+      size: info.size,
+      size_label: formatBytes(info.size),
+      type: backupType(entry.name),
+    });
+  }
+  return backups.sort((a, b) => Date.parse(b.modified_at) - Date.parse(a.modified_at) || b.filename.localeCompare(a.filename));
+}
+
+async function dataStatus() {
+  const stateInfo = existsSync(sharedStatePath) ? await stat(sharedStatePath) : null;
+  const backups = await listBackups();
+  const sharedState = await readSharedStateJson();
+  const backupBytes = backups.reduce((sum, item) => sum + Number(item.size || 0), 0);
+  const dataBytes = Number(stateInfo?.size || 0);
+  return {
+    storage_model: "JSON file persistence",
+    data_file: {
+      label: "ERP Data File Size",
+      exists: Boolean(stateInfo),
+      size: dataBytes,
+      size_label: formatBytes(dataBytes),
+      modified_at: stateInfo?.mtime?.toISOString?.() || "",
+    },
+    record_counts: {
+      orders: Array.isArray(sharedState.orders) ? sharedState.orders.length : 0,
+      customers: Array.isArray(sharedState.customers) ? sharedState.customers.length : 0,
+      products: Array.isArray(sharedState.products) ? sharedState.products.length : 0,
+      users: Array.isArray(sharedState.users) ? sharedState.users.length : 0,
+    },
+    storage_usage: {
+      data_file_size: dataBytes,
+      backups_size: backupBytes,
+      backups_count: backups.length,
+      total_erp_managed_size: dataBytes + backupBytes,
+      total_erp_managed_size_label: formatBytes(dataBytes + backupBytes),
+      disk_capacity: null,
+      disk_capacity_label: "Disk capacity unavailable",
+      percent_used: null,
+    },
+    backup_retention: {
+      enabled: false,
+      keep_most_recent: 30,
+      note: "Existing backups are preserved unless retention is explicitly enabled in a future release.",
+    },
+  };
+}
+
+function addStateAuditEntry(state, user, action, reason = "") {
+  if (!Array.isArray(state.auditLog)) state.auditLog = [];
+  state.auditLog.push({
+    id: `AUDIT-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+    action,
+    record_type: "system",
+    record_id: "shared-state",
+    reason,
+    employee: user?.name || user?.username || "Super Admin",
+    user: user?.username || "",
+    at: new Date().toISOString(),
+  });
 }
 
 function apiOrderStatusSnapshot(order = {}) {
@@ -1751,6 +1920,141 @@ const server = createServer(async (request, response) => {
         "Cache-Control": "no-store",
       });
       response.end(JSON.stringify(allowed ? { ok: true, user: safeUser({ ...starterUser, ...savedUser, username }) } : { ok: false }));
+      return;
+    }
+
+    if (requestUrl.pathname === "/api/settings/data-status" && request.method === "GET") {
+      const user = await requireSuperAdmin(request, response);
+      if (!user) return;
+      sendJson(response, 200, { ok: true, status: await dataStatus() });
+      return;
+    }
+
+    if (requestUrl.pathname === "/api/settings/backups" && request.method === "GET") {
+      const user = await requireSuperAdmin(request, response);
+      if (!user) return;
+      sendJson(response, 200, { ok: true, backups: await listBackups() });
+      return;
+    }
+
+    if (requestUrl.pathname === "/api/settings/backups" && request.method === "POST") {
+      const user = await requireSuperAdmin(request, response);
+      if (!user) return;
+      const backup = await createNamedBackup("manual");
+      const sharedState = await readSharedStateJson();
+      addStateAuditEntry(sharedState, user, "Manual backup created", `Backup file: ${backup.filename}`);
+      await writeSharedStateJson(sharedState);
+      sendJson(response, 201, { ok: true, backup, message: "Backup created successfully." });
+      return;
+    }
+
+    if (requestUrl.pathname === "/api/settings/backups/current/download" && request.method === "GET") {
+      const user = await requireSuperAdmin(request, response);
+      if (!user) return;
+      const body = existsSync(sharedStatePath) ? await readFile(sharedStatePath, "utf8") : "{}";
+      response.writeHead(200, {
+        "Content-Type": "application/json; charset=utf-8",
+        "Content-Disposition": `attachment; filename="shared-state-current-${utcFileStamp()}.json"`,
+        "Cache-Control": "no-store",
+      });
+      response.end(body);
+      return;
+    }
+
+    const backupDownloadMatch = requestUrl.pathname.match(/^\/api\/settings\/backups\/([^/]+)\/download$/);
+    if (backupDownloadMatch && request.method === "GET") {
+      const user = await requireSuperAdmin(request, response);
+      if (!user) return;
+      const filename = safeBackupFileName(decodeURIComponent(backupDownloadMatch[1]));
+      if (!filename) {
+        sendJson(response, 400, { ok: false, error: "Invalid backup filename." });
+        return;
+      }
+      const backupPath = path.join(backupRoot, filename);
+      if (!backupPath.startsWith(backupRoot) || !existsSync(backupPath)) {
+        sendJson(response, 404, { ok: false, error: "Backup was not found." });
+        return;
+      }
+      response.writeHead(200, {
+        "Content-Type": "application/json; charset=utf-8",
+        "Content-Disposition": `attachment; filename="${filename}"`,
+        "Cache-Control": "no-store",
+      });
+      response.end(await readFile(backupPath, "utf8"));
+      return;
+    }
+
+    const backupRestoreMatch = requestUrl.pathname.match(/^\/api\/settings\/backups\/([^/]+)\/restore$/);
+    if (backupRestoreMatch && request.method === "POST") {
+      const user = await requireSuperAdmin(request, response);
+      if (!user) return;
+      const body = await parseJsonBody(request);
+      if (String(body.confirmation || "").trim() !== "RESTORE") {
+        sendJson(response, 400, { ok: false, error: "Type RESTORE to confirm the restore." });
+        return;
+      }
+      const filename = safeBackupFileName(decodeURIComponent(backupRestoreMatch[1]));
+      if (!filename) {
+        sendJson(response, 400, { ok: false, error: "Invalid backup filename." });
+        return;
+      }
+      const backupPath = path.join(backupRoot, filename);
+      if (!backupPath.startsWith(backupRoot) || !existsSync(backupPath)) {
+        sendJson(response, 404, { ok: false, error: "Backup was not found." });
+        return;
+      }
+      const restoreBody = await readFile(backupPath, "utf8");
+      let restoredState;
+      try {
+        restoredState = JSON.parse(restoreBody);
+      } catch {
+        sendJson(response, 400, { ok: false, error: "Backup file is not valid JSON." });
+        return;
+      }
+      if (!assertAlliedStateShape(restoredState)) {
+        sendJson(response, 400, { ok: false, error: "Backup does not look like an Allied ERP state file." });
+        return;
+      }
+      let safetyBackup = null;
+      try {
+        safetyBackup = await createNamedBackup("pre-restore");
+      } catch (error) {
+        console.error(`[data-protection] Pre-restore backup failed: ${error.message}`);
+      }
+      addStateAuditEntry(restoredState, user, "Backup restored", `Restored ${filename}. Safety backup: ${safetyBackup?.filename || "failed"}`);
+      await writeSharedStateJson(restoredState);
+      sendJson(response, 200, { ok: true, restored: filename, safetyBackup, message: "Backup restored successfully." });
+      return;
+    }
+
+    if (requestUrl.pathname === "/api/settings/backups/upload-and-restore" && request.method === "POST") {
+      const user = await requireSuperAdmin(request, response);
+      if (!user) return;
+      const body = await parseJsonBody(request);
+      if (String(body.confirmation || "").trim() !== "RESTORE") {
+        sendJson(response, 400, { ok: false, error: "Type RESTORE to confirm the restore." });
+        return;
+      }
+      const content = String(body.content || "");
+      if (!content || content.length > 5 * 1024 * 1024) {
+        sendJson(response, 400, { ok: false, error: "Upload is empty or too large." });
+        return;
+      }
+      let restoredState;
+      try {
+        restoredState = JSON.parse(content);
+      } catch {
+        sendJson(response, 400, { ok: false, error: "Uploaded backup is not valid JSON." });
+        return;
+      }
+      if (!assertAlliedStateShape(restoredState)) {
+        sendJson(response, 400, { ok: false, error: "Uploaded file does not look like an Allied ERP state file." });
+        return;
+      }
+      const safetyBackup = await createNamedBackup("pre-restore");
+      addStateAuditEntry(restoredState, user, "Uploaded backup restored", `Safety backup: ${safetyBackup.filename}`);
+      await writeSharedStateJson(restoredState);
+      sendJson(response, 200, { ok: true, safetyBackup, message: "Uploaded backup restored successfully." });
       return;
     }
 

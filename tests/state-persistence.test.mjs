@@ -100,6 +100,21 @@ async function getSalesOrders(params = {}) {
   return JSON.parse(text);
 }
 
+async function settingsRequest(pathname, { username = "admin", password = "adminpass", method = "GET", body = null } = {}) {
+  const response = await fetch(`http://127.0.0.1:${appPort}${pathname}`, {
+    method,
+    headers: {
+      "Content-Type": "application/json",
+      "X-Allied-Username": username,
+      "X-Allied-Password": password,
+    },
+    body: body === null ? undefined : JSON.stringify(body),
+  });
+  const text = await response.text();
+  const parsed = text && response.headers.get("content-type")?.includes("application/json") ? JSON.parse(text) : text;
+  return { response, body: parsed, text };
+}
+
 async function postUnitOfMeasure(body) {
   const response = await fetch(`http://127.0.0.1:${appPort}/api/units-of-measure`, {
     method: "POST",
@@ -402,6 +417,73 @@ test("production-style saves preserve 100 customers and 100 sales orders", async
   assert.equal(persistedOrders.every((order) => order.purchase_order_number), true);
   assert.equal(persistedOrders.every((order) => order.verificationHistory?.length === 1), true);
   assert.equal(persistedOrders.every((order) => order.vapiNotes?.length === 1), true);
+});
+
+test("settings backup endpoints require Super Admin authorization", async () => {
+  await postState({
+    users: [
+      { username: "admin", name: "Main Admin", role: "super_admin", password: "adminpass" },
+      { username: "manager", name: "Manager", role: "admin", password: "managerpass" },
+      { username: "sales", name: "Sales User", role: "sales", password: "salespass" },
+    ],
+  });
+  const unauth = await fetch(`http://127.0.0.1:${appPort}/api/settings/backups`);
+  assert.equal(unauth.status, 401);
+  assert.equal((await settingsRequest("/api/settings/backups", { username: "manager", password: "managerpass" })).response.status, 403);
+  assert.equal((await settingsRequest("/api/settings/backups", { username: "sales", password: "salespass" })).response.status, 403);
+  assert.equal((await settingsRequest("/api/settings/backups")).response.status, 200);
+});
+
+test("manual backup history download and data status are safe", async () => {
+  await postState({
+    users: [{ username: "admin", name: "Main Admin", role: "super_admin", password: "adminpass" }],
+    customers: [{ id: "C-BACKUP", name: "Backup Customer" }],
+    orders: [{ id: "SO-BACKUP", customerId: "C-BACKUP", status: "pending" }],
+  });
+  const created = await settingsRequest("/api/settings/backups", { method: "POST", body: {} });
+  assert.equal(created.response.status, 201);
+  assert.match(created.body.backup.filename, /^shared-state-manual-/);
+  assert.equal(created.body.backup.filename.includes(".."), false);
+
+  const history = await settingsRequest("/api/settings/backups");
+  assert.equal(history.body.backups.some((backup) => backup.filename === created.body.backup.filename), true);
+
+  const download = await settingsRequest(`/api/settings/backups/${encodeURIComponent(created.body.backup.filename)}/download`);
+  assert.equal(download.response.status, 200);
+  const downloaded = JSON.parse(download.text);
+  assert.equal(Array.isArray(downloaded.customers), true);
+  assert.equal(download.response.headers.get("content-disposition").includes(created.body.backup.filename), true);
+
+  const traversal = await settingsRequest("/api/settings/backups/..%2Fshared-state.json/download");
+  assert.equal(traversal.response.status, 400);
+
+  const status = await settingsRequest("/api/settings/data-status");
+  assert.equal(status.body.status.storage_model, "JSON file persistence");
+  assert.equal(status.body.status.record_counts.customers >= 1, true);
+  assert.equal(status.body.status.storage_usage.disk_capacity_label, "Disk capacity unavailable");
+});
+
+test("backup restore validates confirmation and state shape then restores atomically", async () => {
+  await postState({
+    users: [{ username: "admin", name: "Main Admin", role: "super_admin", password: "adminpass" }],
+    customers: [{ id: "C-RESTORE-OLD", name: "Old Customer" }],
+  });
+  const backup = await settingsRequest("/api/settings/backups", { method: "POST", body: {} });
+  await postState({ customers: [{ id: "C-RESTORE-NEW", name: "New Customer" }] });
+
+  const noConfirm = await settingsRequest(`/api/settings/backups/${encodeURIComponent(backup.body.backup.filename)}/restore`, { method: "POST", body: { confirmation: "restore" } });
+  assert.equal(noConfirm.response.status, 400);
+
+  const invalid = await settingsRequest("/api/settings/backups/upload-and-restore", { method: "POST", body: { confirmation: "RESTORE", content: "{\"hello\":true}" } });
+  assert.equal(invalid.response.status, 400);
+
+  const restored = await settingsRequest(`/api/settings/backups/${encodeURIComponent(backup.body.backup.filename)}/restore`, { method: "POST", body: { confirmation: "RESTORE" } });
+  assert.equal(restored.response.status, 200);
+  assert.ok(restored.body.safetyBackup?.filename);
+  const state = await getState();
+  assert.equal(state.customers.some((customer) => customer.id === "C-RESTORE-OLD"), true);
+  assert.equal(state.customers.some((customer) => customer.id === "C-RESTORE-NEW"), false);
+  assert.equal(state.auditLog.some((entry) => entry.action === "Backup restored"), true);
 });
 
 test("deleted sales orders are hidden for one user instead of removed globally", async () => {

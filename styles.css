@@ -4,6 +4,10 @@
   --line: #d8dee6;
   --soft: #f4f6f8;
   --panel: #ffffff;
+  --page: #eef2f5;
+  --sidebar: #18232e;
+  --sidebar-active: #263645;
+  --field: #ffffff;
   --accent: #176f73;
   --accent-2: #ad5d1e;
   --danger: #b42318;
@@ -13,6 +17,26 @@
   --shadow: 0 14px 40px rgba(23, 33, 43, 0.1);
 }
 
+:root[data-theme="dark"] {
+  --ink: #edf2f7;
+  --muted: #aab6c3;
+  --line: #3a4653;
+  --soft: #202a35;
+  --panel: #17212b;
+  --page: #101820;
+  --sidebar: #0f1720;
+  --sidebar-active: #263645;
+  --field: #202a35;
+  --accent: #55b8bd;
+  --accent-2: #f0a45d;
+  --danger: #ff8a80;
+  --warn: #ffc766;
+  --ok: #74d394;
+  --focus: #55b8bd;
+  --shadow: 0 14px 40px rgba(0, 0, 0, 0.35);
+  color-scheme: dark;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -20,7 +44,7 @@
 body {
   margin: 0;
   color: var(--ink);
-  background: #eef2f5;
+  background: var(--page);
   font-family: Arial, Helvetica, sans-serif;
 }
 
@@ -42,7 +66,7 @@ button {
 }
 
 .sidebar {
-  background: #18232e;
+  background: var(--sidebar);
   color: #fff;
   padding: 22px 16px;
   display: flex;
@@ -74,7 +98,7 @@ button {
   height: 42px;
   border-radius: 6px;
   object-fit: cover;
-  background: #fff;
+  background: var(--field);
   border: 1px solid rgba(255, 255, 255, 0.28);
 }
 
@@ -113,7 +137,7 @@ button {
 .nav button:hover,
 .nav button.active {
   color: #fff;
-  background: #263645;
+  background: var(--sidebar-active);
 }
 
 .nav .ico {
@@ -143,7 +167,7 @@ button {
   align-items: center;
   justify-content: space-between;
   padding: 14px 26px;
-  background: #fff;
+  background: var(--field);
   border-bottom: 1px solid var(--line);
 }
 
@@ -173,8 +197,8 @@ button {
   align-items: center;
   border: 1px solid var(--line);
   border-radius: 999px;
-  background: #f8fafb;
-  color: #344150;
+  background: var(--soft);
+  color: var(--ink);
   padding: 6px 10px;
   font-size: 13px;
   font-weight: 700;
@@ -296,7 +320,7 @@ button {
 .vapi-note-card {
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #fff;
+  background: var(--field);
   padding: 14px;
 }
 
@@ -434,7 +458,7 @@ button {
   border: 1px solid var(--line);
   border-radius: 6px;
   padding: 0 12px;
-  background: #fff;
+  background: var(--field);
 }
 
 .btn {
@@ -442,7 +466,7 @@ button {
   border: 1px solid var(--line);
   border-radius: 6px;
   padding: 8px 12px;
-  background: #fff;
+  background: var(--field);
   color: var(--ink);
   display: inline-flex;
   align-items: center;
@@ -453,7 +477,7 @@ button {
 
 .btn:hover {
   border-color: #aeb8c4;
-  background: #f8fafb;
+  background: var(--soft);
 }
 
 .btn.primary {
@@ -487,14 +511,14 @@ button {
   height: 38px;
   border: 1px solid var(--line);
   border-radius: 6px;
-  background: #fff;
+  background: var(--field);
   display: inline-grid;
   place-items: center;
   position: relative;
 }
 
 .icon-btn:hover {
-  background: #f8fafb;
+  background: var(--soft);
 }
 
 .danger-icon {
@@ -564,7 +588,7 @@ th {
   font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0;
-  background: #f8fafb;
+  background: var(--soft);
 }
 
 tr:last-child td {
@@ -745,7 +769,7 @@ tr:last-child td {
   display: flex;
   align-items: center;
   gap: 9px;
-  color: #344150;
+  color: var(--ink);
   font-size: 13px;
   font-weight: 700;
 }
@@ -769,7 +793,7 @@ tr:last-child td {
 }
 
 label {
-  color: #344150;
+  color: var(--ink);
   font-size: 13px;
   font-weight: 700;
 }
@@ -780,7 +804,7 @@ textarea {
   width: 100%;
   border: 1px solid var(--line);
   border-radius: 6px;
-  background: #fff;
+  background: var(--field);
   color: var(--ink);
   padding: 9px 10px;
 }
@@ -788,7 +812,7 @@ textarea {
 input:disabled,
 select:disabled,
 textarea:disabled {
-  background: #eef2f5;
+  background: var(--page);
   color: var(--muted);
   cursor: not-allowed;
 }
@@ -841,7 +865,7 @@ button:focus {
   width: 100%;
   border: 1px solid var(--line);
   border-radius: 6px;
-  background: #f8fafb;
+  background: var(--soft);
   color: var(--ink);
   padding: 9px 10px;
   font-weight: 700;
@@ -893,7 +917,7 @@ button:focus {
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 12px;
-  background: #fff;
+  background: var(--field);
 }
 
 .log-top {
@@ -929,7 +953,7 @@ button:focus {
   padding: 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #f8fafb;
+  background: var(--soft);
 }
 
 .chat-context span {
@@ -972,7 +996,7 @@ button:focus {
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 10px 12px;
-  background: #fff;
+  background: var(--field);
   line-height: 1.45;
 }
 
@@ -1006,7 +1030,7 @@ button:focus {
   align-items: start;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #fff;
+  background: var(--field);
   color: var(--ink);
   padding: 12px;
   text-align: left;
@@ -1023,7 +1047,7 @@ button:focus {
   display: grid;
   place-items: center;
   border-radius: 6px;
-  background: #eef2f5;
+  background: var(--page);
   font-weight: 800;
 }
 
@@ -1056,7 +1080,7 @@ button:focus {
   align-content: start;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #fff;
+  background: var(--field);
   color: var(--ink);
   padding: 14px;
   text-align: left;
@@ -1074,7 +1098,7 @@ button:focus {
 
 .verify-card.disabled-card:hover {
   border-color: var(--line);
-  background: #fff;
+  background: var(--field);
 }
 
 .verify-card.cancel-card:hover {
@@ -1133,7 +1157,7 @@ button:focus {
   width: min(760px, 100%);
   max-height: min(88vh, 860px);
   overflow: auto;
-  background: #fff;
+  background: var(--field);
   border-radius: 8px;
   box-shadow: var(--shadow);
 }
@@ -1176,7 +1200,7 @@ button:focus {
 
 .login-panel {
   width: min(430px, 100%);
-  background: #fff;
+  background: var(--field);
   border: 1px solid var(--line);
   border-radius: 8px;
   box-shadow: var(--shadow);

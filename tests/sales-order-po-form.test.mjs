@@ -128,10 +128,12 @@ test("login credentials are preserved while typing and remembered after login", 
   assert.match(appSource, /rememberLoginCredentials\(username, password\);\s*saveCurrentUser\(user\)/);
 });
 
-test("assistant tab is visible only to super admin users", () => {
-  assert.match(appSource, /if \(view === "settings" && !isSuperAdmin\(\)\) view = "dashboard"/);
-  assert.match(appSource, /\$\{isSuperAdmin\(\) \? navButton\("settings", "⚙", "Vapi"\) : ""\}/);
-  assert.match(appSource, /if \(view === "settings" && isSuperAdmin\(\)\) return settingsView\(\)/);
+test("settings is visible to all users while assistant tools remain super-admin only", () => {
+  assert.match(appSource, /navButton\("settings", "S", "Settings"\)/);
+  assert.match(appSource, /if \(view === "settings"\) return settingsView\(\)/);
+  assert.match(appSource, /isSuperAdmin\(\) \? `<div class="panel">[\s\S]*Assistant Connection/);
+  assert.match(appSource, /isSuperAdmin\(\) \? dataBackupsSection/);
+  assert.doesNotMatch(appSource, /if \(view === "settings" && !isSuperAdmin\(\)\) view = "dashboard"/);
 });
 
 test("callback requested is a first-class order status in the frontend", () => {
@@ -144,6 +146,35 @@ test("callback requested is a first-class order status in the frontend", () => {
   assert.match(styleSource, /\.status\.callback_requested/);
   assert.match(serverSource, /callback_requested: 70/);
   assert.match(serverSource, /recordOrderStatus\(order, "callback_requested", "Customer requested a callback during Vapi verification\.", "Vapi"\)/);
+});
+
+test("settings page supports all-user themes and super-admin-only data backups", () => {
+  assert.match(appSource, /const themePreferenceKey = "allied_erp_theme"/);
+  assert.match(appSource, /function applyThemePreference/);
+  assert.match(appSource, /document\.documentElement\.dataset\.theme/);
+  assert.match(appSource, /Use System Theme/);
+  assert.match(appSource, /Dark Mode/);
+  assert.match(appSource, /navButton\("settings", "S", "Settings"\)/);
+  assert.doesNotMatch(appSource, /view === "settings" && !isSuperAdmin\(\)/);
+  assert.match(appSource, /function dataBackupsSection/);
+  assert.match(appSource, /isSuperAdmin\(\) \? dataBackupsSection/);
+  assert.match(appSource, /Backup Now/);
+  assert.match(appSource, /Type RESTORE to confirm/);
+  assert.match(appSource, /backupAuthHeaders/);
+  assert.match(styleSource, /:root\[data-theme="dark"\]/);
+  assert.match(styleSource, /color-scheme: dark/);
+});
+
+test("server exposes guarded settings backup endpoints", () => {
+  assert.match(serverSource, /function requireSuperAdmin/);
+  assert.match(serverSource, /Super Admin authorization is required/);
+  assert.match(serverSource, /\/api\/settings\/data-status/);
+  assert.match(serverSource, /\/api\/settings\/backups/);
+  assert.match(serverSource, /\/api\/settings\/backups\/current\/download/);
+  assert.match(serverSource, /upload-and-restore/);
+  assert.match(serverSource, /safeBackupFileName/);
+  assert.match(serverSource, /Backup does not look like an Allied ERP state file/);
+  assert.match(serverSource, /Pre-restore backup/);
 });
 
 test("production reset is disabled and deleted records can be restored", () => {

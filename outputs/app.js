@@ -116,6 +116,12 @@ let stateSaveTimer = null;
 let stateSyncInFlight = false;
 const rememberedLoginKey = "alliedErpRememberedLogin";
 const loginDraftKey = "alliedErpLoginDraft";
+const themePreferenceKey = "allied_erp_theme";
+let backupStatus = null;
+let backupHistory = [];
+let backupLoading = false;
+
+applyThemePreference();
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
@@ -401,6 +407,31 @@ function loadSavedLoginCredentials() {
     password: String(draft.password || remembered.password || ""),
   };
 }
+
+function themePreference() {
+  return localStorage.getItem(themePreferenceKey) || "system";
+}
+
+function resolvedTheme(preference = themePreference()) {
+  if (preference === "dark" || preference === "light") return preference;
+  return window.matchMedia?.("(prefers-color-scheme: dark)")?.matches ? "dark" : "light";
+}
+
+function applyThemePreference(preference = themePreference()) {
+  document.documentElement.dataset.themePreference = preference;
+  document.documentElement.dataset.theme = resolvedTheme(preference);
+}
+
+function setThemePreference(preference) {
+  localStorage.setItem(themePreferenceKey, preference);
+  applyThemePreference(preference);
+  render();
+  toast(`Theme set to ${preference === "system" ? "system default" : preference}.`);
+}
+
+window.matchMedia?.("(prefers-color-scheme: dark)")?.addEventListener?.("change", () => {
+  if (themePreference() === "system") applyThemePreference("system");
+});
 
 function saveLoginDraftFromInputs() {
   const username = document.querySelector("#loginUsername")?.value || "";
@@ -700,6 +731,7 @@ function setView(nextView) {
   editingOrderId = null;
   editingProductId = null;
   editingCustomerId = null;
+  if (view === "settings" && isSuperAdmin() && !backupStatus && !backupLoading) loadBackupSettings({ render: false });
   render();
 }
 
@@ -783,10 +815,10 @@ function render() {
     products: ["Products", "Maintain catalog products and pricing."],
     customers: ["Customers", "Manage customer contacts and payment terms."],
     users: ["Users", "Add sales reps and manage app logins."],
-    settings: ["Assistant Verification", "Connect the ERP order workflow to an assistant."],
+    settings: ["Settings", "Manage appearance, preferences, and protected system tools."],
   };
   if (view === "users" && !isAdmin()) view = "dashboard";
-  if (view === "settings" && !isSuperAdmin()) view = "dashboard";
+
 
   document.querySelector("#app").innerHTML = `
     <div class="shell">
@@ -804,7 +836,7 @@ function render() {
           ${navButton("products", "◇", "Products")}
           ${navButton("customers", "◉", "Customers")}
           ${isAdmin() ? navButton("users", "♙", "Users") : ""}
-          ${isSuperAdmin() ? navButton("settings", "⚙", "Vapi") : ""}
+          ${navButton("settings", "S", "Settings")}
         </nav>
         <div class="sidebar-foot">Signed in as ${html(currentUser.name)}. ${html(roleLabel())} view is filtered to your workflow.</div>
       </aside>
@@ -823,8 +855,7 @@ function render() {
 }
 
 function navButton(target, icon, label) {
-  const displayLabel = target === "settings" ? "Assistant" : label;
-  return `<button class="${view === target ? "active" : ""}" onclick="setView('${target}')"><span class="ico">${icon}</span><span>${displayLabel}</span></button>`;
+  return `<button class="${view === target ? "active" : ""}" onclick="setView('${target}')"><span class="ico">${icon}</span><span>${label}</span></button>`;
 }
 
 function topActions() {
@@ -837,7 +868,7 @@ function topActions() {
   if (view === "customers") return `<button class="btn primary" onclick="openCustomerForm()">＋ New Customer</button>${account}`;
   if (view === "users" && isAdmin()) return `<button class="btn primary" onclick="openUserForm()">＋ New User</button>${account}`;
   if (view === "dashboard") return `<button class="btn primary" onclick="setView('orders')">＋ Enter Order</button>${account}`;
-  return isProductionApp() ? account : `<button class="btn" onclick="resetDemoData()">↻ Reset Demo Data</button>${account}`;
+  return account;
 }
 
 function notificationItems() {
@@ -919,7 +950,7 @@ function renderView() {
   if (view === "products") return productsView();
   if (view === "customers") return customersView();
   if (view === "users" && isAdmin()) return usersView();
-  if (view === "settings" && isSuperAdmin()) return settingsView();
+  if (view === "settings") return settingsView();
   return dashboardView();
 }
 
@@ -2126,9 +2157,26 @@ function usersView() {
 function settingsView() {
   const deletedCustomers = state.customers.filter((customer) => isSoftDeleted(customer));
   const deletedProducts = state.products.filter((product) => isSoftDeleted(product));
+  const preference = themePreference();
+  const dataSection = isSuperAdmin() ? dataBackupsSection(deletedCustomers, deletedProducts) : "";
   return `
     <div class="split">
       <div class="panel">
+        <div class="panel-head"><h2 class="panel-title">Appearance</h2></div>
+        <div class="panel-body form-grid">
+          <div class="field full"><div class="callout">Choose the ERP theme for this browser. The setting is saved and applied before the app renders.</div></div>
+          <div class="field">
+            <label><input type="radio" name="themePreference" value="light" ${preference === "light" ? "checked" : ""} onchange="setThemePreference(this.value)" /> Light Mode</label>
+          </div>
+          <div class="field">
+            <label><input type="radio" name="themePreference" value="dark" ${preference === "dark" ? "checked" : ""} onchange="setThemePreference(this.value)" /> Dark Mode</label>
+          </div>
+          <div class="field">
+            <label><input type="radio" name="themePreference" value="system" ${preference === "system" ? "checked" : ""} onchange="setThemePreference(this.value)" /> Use System Theme</label>
+          </div>
+        </div>
+      </div>
+      ${isSuperAdmin() ? `<div class="panel">
         <div class="panel-head"><h2 class="panel-title">Assistant Connection</h2></div>
         <div class="panel-body form-grid">
           <div class="field full"><div class="callout">Assistant Verification is configured securely on Render with VAPI_API_KEY, VAPI_ASSISTANT_ID, and VAPI_PHONE_NUMBER_ID. The API key is never saved in the browser.</div></div>
@@ -2147,7 +2195,7 @@ function settingsView() {
         <div class="panel-body">
           <div class="callout">Orders can be verified manually with internal notes or sent to Assistant Verification from the Orders screen. Assistant Verification starts an outbound Vapi call, then marks the order verified only after Vapi sends a successful completion webhook.</div>
         </div>
-      </div>
+      </div>` : ""}
       <div class="panel">
         <div class="panel-head"><h2 class="panel-title">Unit of Measure Classifications</h2><div class="toolbar">${isAdmin() ? `<button class="btn" onclick="addUnitOfMeasure()">+ Add</button>` : ""}</div></div>
         <div class="table-wrap">
@@ -2165,26 +2213,194 @@ function settingsView() {
           </table>
         </div>
       </div>
-      <div class="panel">
-        <div class="panel-head"><h2 class="panel-title">Deleted Records</h2></div>
-        <div class="panel-body">
-          <div class="callout">Deleted production records are hidden from normal lists but retained here for recovery.</div>
+      ${dataSection}
+    </div>
+  `;
+}
+
+function dataBackupsSection(deletedCustomers, deletedProducts) {
+  const status = backupStatus;
+  const dataFile = status?.data_file || {};
+  const counts = status?.record_counts || {};
+  const storage = status?.storage_usage || {};
+  return `
+    <div class="panel">
+      <div class="panel-head"><h2 class="panel-title">Data & Backups</h2><div class="toolbar"><button class="btn" onclick="loadBackupSettings()">Refresh</button><button class="btn primary" onclick="createBackupNow()" ${backupLoading ? "disabled" : ""}>Backup Now</button><button class="btn" onclick="downloadCurrentBackup()">Download Current</button></div></div>
+      <div class="panel-body">
+        <div class="callout">Super Admin only. Allied ERP is currently using JSON-file persistence stored in ALLIED_ERP_DATA_DIR, not PostgreSQL.</div>
+        <div class="grid metrics">
+          ${metric("ERP Data File Size", dataFile.size_label || "Unknown", dataFile.modified_at ? `Modified ${dataFile.modified_at}` : "shared-state.json")}
+          ${metric("Orders", counts.orders ?? "-", "Saved sales orders")}
+          ${metric("Customers", counts.customers ?? "-", "Saved customers")}
+          ${metric("Products", counts.products ?? "-", "Saved products")}
+          ${metric("Backups", storage.backups_count ?? "-", storage.backups_size ? `${formatClientBytes(storage.backups_size)} stored` : "Backup history")}
+          ${metric("ERP Storage", storage.total_erp_managed_size_label || "Unknown", storage.disk_capacity_label || "Disk capacity unavailable")}
         </div>
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>Type</th><th>Name</th><th>Deleted At</th><th>Deleted By</th><th>Actions</th></tr></thead>
-            <tbody>${[...deletedCustomers.map((customer) => ({ type: "Customer", id: customer.id, name: customer.name, at: customer.deleted_at, by: customer.deleted_by })), ...deletedProducts.map((product) => ({ type: "Product", id: product.id, name: product.name || product.sku, at: product.deleted_at, by: product.deleted_by }))].map((record) => `<tr>
-              <td>${html(record.type)}</td>
-              <td><strong>${html(record.name || record.id)}</strong></td>
-              <td>${html(record.at || "")}</td>
-              <td>${html(record.by || "")}</td>
-              <td><button class="btn mini-btn" onclick="restoreDeletedRecord('${record.type.toLowerCase()}', '${html(record.id)}')">Restore</button></td>
-            </tr>`).join("") || `<tr><td colspan="5"><div class="empty">No deleted customer or product records.</div></td></tr>`}</tbody>
-          </table>
-        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Backup File</th><th>Created</th><th>Size</th><th>Type</th><th>Actions</th></tr></thead>
+          <tbody>${backupHistory.map((backup) => `<tr>
+            <td><strong>${html(backup.filename)}</strong></td>
+            <td>${html(backup.modified_at || backup.created_at || "")}</td>
+            <td>${html(backup.size_label || formatClientBytes(backup.size))}</td>
+            <td>${html(backup.type || "Automatic")}</td>
+            <td><button class="btn mini-btn" onclick="downloadBackup('${html(backup.filename)}')">Download</button><button class="btn mini-btn danger" onclick="confirmRestoreBackup('${html(backup.filename)}')">Restore</button></td>
+          </tr>`).join("") || `<tr><td colspan="5"><div class="empty">No backups found.</div></td></tr>`}</tbody>
+        </table>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-head"><h2 class="panel-title">Deleted Records</h2></div>
+      <div class="panel-body">
+        <div class="callout">Deleted production records are hidden from normal lists but retained here for recovery.</div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Type</th><th>Name</th><th>Deleted At</th><th>Deleted By</th><th>Actions</th></tr></thead>
+          <tbody>${[...deletedCustomers.map((customer) => ({ type: "Customer", id: customer.id, name: customer.name, at: customer.deleted_at, by: customer.deleted_by })), ...deletedProducts.map((product) => ({ type: "Product", id: product.id, name: product.name || product.sku, at: product.deleted_at, by: product.deleted_by }))].map((record) => `<tr>
+            <td>${html(record.type)}</td>
+            <td><strong>${html(record.name || record.id)}</strong></td>
+            <td>${html(record.at || "")}</td>
+            <td>${html(record.by || "")}</td>
+            <td><button class="btn mini-btn" onclick="restoreDeletedRecord('${record.type.toLowerCase()}', '${html(record.id)}')">Restore</button></td>
+          </tr>`).join("") || `<tr><td colspan="5"><div class="empty">No deleted customer or product records.</div></td></tr>`}</tbody>
+        </table>
       </div>
     </div>
   `;
+}
+
+function formatClientBytes(bytes = 0) {
+  const value = Number(bytes) || 0;
+  if (value >= 1024 * 1024 * 1024) return `${(value / 1024 / 1024 / 1024).toFixed(2)} GB`;
+  if (value >= 1024 * 1024) return `${(value / 1024 / 1024).toFixed(2)} MB`;
+  if (value >= 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${value} B`;
+}
+
+function backupAuthHeaders() {
+  const saved = loadSavedLoginCredentials();
+  return {
+    "X-Allied-Username": currentUser?.username || saved.username || "",
+    "X-Allied-Password": saved.password || "",
+  };
+}
+
+async function settingsApi(path, options = {}) {
+  const response = await fetch(path, {
+    ...options,
+    headers: {
+      ...(options.body ? { "Content-Type": "application/json" } : {}),
+      ...backupAuthHeaders(),
+      ...(options.headers || {}),
+    },
+    cache: "no-store",
+  });
+  const text = await response.text();
+  const body = text ? JSON.parse(text) : {};
+  if (!response.ok || body.ok === false) throw new Error(body.error || `Request failed with ${response.status}`);
+  return body;
+}
+
+async function loadBackupSettings(options = {}) {
+  if (!isSuperAdmin()) return;
+  backupLoading = true;
+  if (options.render !== false) render();
+  try {
+    const [statusResult, backupsResult] = await Promise.all([
+      settingsApi("./api/settings/data-status"),
+      settingsApi("./api/settings/backups"),
+    ]);
+    backupStatus = statusResult.status;
+    backupHistory = backupsResult.backups || [];
+  } catch (error) {
+    toast(`Backup settings error: ${error.message}`);
+  } finally {
+    backupLoading = false;
+    if (options.render !== false) render();
+  }
+}
+
+async function createBackupNow() {
+  if (!isSuperAdmin()) return toast("Only Super Admin can create backups.");
+  backupLoading = true;
+  render();
+  try {
+    const result = await settingsApi("./api/settings/backups", { method: "POST", body: "{}" });
+    toast(`Backup created: ${result.backup?.filename || "success"}`);
+    await loadBackupSettings({ render: false });
+  } catch (error) {
+    toast(`Backup failed: ${error.message}`);
+  } finally {
+    backupLoading = false;
+    render();
+  }
+}
+
+async function downloadWithAuth(url, fallbackName = "allied-erp-backup.json") {
+  try {
+    const response = await fetch(url, { headers: backupAuthHeaders(), cache: "no-store" });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error(body.error || `Download failed with ${response.status}`);
+    }
+    const blob = await response.blob();
+    const disposition = response.headers.get("Content-Disposition") || "";
+    const filename = disposition.match(/filename="([^"]+)"/)?.[1] || fallbackName;
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(link.href);
+  } catch (error) {
+    toast(`Download failed: ${error.message}`);
+  }
+}
+
+function downloadCurrentBackup() {
+  if (!isSuperAdmin()) return toast("Only Super Admin can download backups.");
+  downloadWithAuth("./api/settings/backups/current/download", "shared-state-current.json");
+}
+
+function downloadBackup(filename) {
+  if (!isSuperAdmin()) return toast("Only Super Admin can download backups.");
+  downloadWithAuth(`./api/settings/backups/${encodeURIComponent(filename)}/download`, filename);
+}
+
+function confirmRestoreBackup(filename) {
+  if (!isSuperAdmin()) return toast("Only Super Admin can restore backups.");
+  openModal(`
+    <div class="modal-head"><h2>Restore Backup</h2><button class="icon-btn" title="Close" onclick="closeModal()">×</button></div>
+    <form onsubmit="restoreBackup(event, '${html(filename)}')">
+      <div class="form-grid">
+        <div class="field full"><div class="callout danger-callout"><strong>Warning:</strong> restoring replaces the current ERP state. A safety backup will be created first.</div></div>
+        <div class="field full"><label>Backup File</label><input value="${html(filename)}" disabled /></div>
+        <div class="field full"><label>Type RESTORE to confirm</label><input id="restoreConfirmText" autocomplete="off" oninput="document.querySelector('#restoreSubmit').disabled=this.value.trim()!=='RESTORE'" /></div>
+      </div>
+      <div class="modal-actions"><button class="btn" type="button" onclick="closeModal()">Cancel</button><button id="restoreSubmit" class="btn danger" type="submit" disabled>Restore Backup</button></div>
+    </form>
+  `);
+}
+
+async function restoreBackup(event, filename) {
+  event.preventDefault();
+  const confirmation = document.querySelector("#restoreConfirmText")?.value || "";
+  try {
+    const result = await settingsApi(`./api/settings/backups/${encodeURIComponent(filename)}/restore`, {
+      method: "POST",
+      body: JSON.stringify({ confirmation }),
+    });
+    closeModal();
+    toast(result.message || "Backup restored.");
+    await syncStateFromServer();
+    await loadBackupSettings({ render: false });
+    render();
+  } catch (error) {
+    toast(`Restore failed: ${error.message}`);
+  }
 }
 
 function restoreDeletedRecord(type, id) {
