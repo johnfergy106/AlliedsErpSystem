@@ -146,6 +146,12 @@ test("login fields can be cleared and passwords are not persisted", () => {
   assert.match(styleSource, /-webkit-text-fill-color: var\(--ink\)/);
 });
 
+test("login form is not remounted by background sync while logged out", () => {
+  assert.match(appSource, /if \(!currentUser\) \{\s*if \(document\.querySelector\("\.login-screen"\)\) return;\s*renderLogin\(\);\s*return;\s*\}/);
+  assert.match(appSource, /window\.setInterval\(\(\) => syncStateFromServer\(\), 5000\)/);
+  assert.match(appSource, /if \(changed && options\.render !== false\) render\(\)/);
+});
+
 test("settings is visible to all users while assistant tools remain super-admin only", () => {
   assert.match(appSource, /navButton\("settings", "S", "Settings"\)/);
   assert.match(appSource, /if \(view === "settings"\) return settingsView\(\)/);

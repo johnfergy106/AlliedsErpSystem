@@ -850,6 +850,7 @@ function logout() {
 
 function render() {
   if (!currentUser) {
+    if (document.querySelector(".login-screen")) return;
     renderLogin();
     return;
   }
